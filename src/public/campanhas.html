@@ -193,13 +193,13 @@ async function carregarTabela() {
     const cpaAgend = l.agendamentos > 0 ? (gasto / l.agendamentos) : null;
 
     totais.gasto += gasto;
-    totais.vendas += l.vendas || 0;
+    totais.vendas += parseInt(l.vendas || 0, 10);
     totais.faturamento += faturamento;
-    totais.agendamentos += l.agendamentos || 0;
-    totais.leads += l.leads || 0;
-    totais.boletos += l.boletos || 0;
-    totais.pix += l.pix || 0;
-    totais.recusados += l.recusados || 0;
+    totais.agendamentos += parseInt(l.agendamentos || 0, 10);
+    totais.leads += parseInt(l.leads || 0, 10);
+    totais.boletos += parseInt(l.boletos || 0, 10);
+    totais.pix += parseInt(l.pix || 0, 10);
+    totais.recusados += parseInt(l.recusados || 0, 10);
 
     return `<tr>
       <td><input type="checkbox"></td>
