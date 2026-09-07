@@ -23,6 +23,12 @@ const webhookPayt = require('./routes/webhookPayt');
 
 const app = express();
 
+// A Railway roda o app atras de um proxy reverso -- sem isso, o Express acha
+// que toda requisicao chegou via http (nao https), o que fazia a URL dos
+// webhooks aparecer errada ("http://" em vez de "https://") na tela de
+// Configuracoes > Webhooks.
+app.set('trust proxy', 1);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
