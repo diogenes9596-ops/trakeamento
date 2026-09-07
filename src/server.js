@@ -20,6 +20,7 @@ const eventosManuaisRoutes = require('./routes/eventosManuais');
 const webhookDatacrazy = require('./routes/webhookDatacrazy');
 const webhookSkale = require('./routes/webhookSkale');
 const webhookPayt = require('./routes/webhookPayt');
+const brandingRoutes = require('./routes/branding');
 
 const app = express();
 
@@ -49,6 +50,9 @@ app.use('/webhook', webhookPayt);
 
 // --- Autenticacao ---
 app.use('/api/auth', authRoutes);
+
+// --- Marca (logo/nome) -- GET e publico (tela de login), POST exige login internamente ---
+app.use('/api/branding', brandingRoutes);
 
 // --- Arquivos publicos (tela de login) ---
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
