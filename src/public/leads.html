@@ -13,7 +13,7 @@
 <script>
 document.getElementById('layout').innerHTML = montarSidebar() + `
   <div class="conteudo">
-    ${montarTopbar('Leads', false)}
+    ${montarTopbar('Leads')}
     <main>
       <div class="painel">
         <div class="painel-titulo">
@@ -43,13 +43,15 @@ function mascararTelefone(tel) {
 
 async function carregar() {
   const busca = document.getElementById('busca').value;
-  const leads = await fetch(`/api/dashboard/leads?busca=${encodeURIComponent(busca)}`).then(r => r.json());
+  const inicio = document.getElementById('dataInicio').value;
+  const fim = document.getElementById('dataFim').value;
+  const leads = await fetch(`/api/dashboard/leads?busca=${encodeURIComponent(busca)}&data_inicio=${inicio}&data_fim=${fim}`).then(r => r.json());
 
   document.getElementById('tituloLeads').textContent = `Leads (${leads.length})`;
   const corpo = document.getElementById('corpo');
 
   if (leads.length === 0) {
-    corpo.innerHTML = '<tr><td colspan="6">Nenhum lead encontrado.</td></tr>';
+    corpo.innerHTML = '<tr><td colspan="7">Nenhum lead encontrado no período.</td></tr>';
     return;
   }
 
@@ -76,6 +78,11 @@ document.getElementById('busca').addEventListener('input', () => {
   timeoutBusca = setTimeout(carregar, 300);
 });
 
+iniciarFiltrosDeData(carregar);
+window.sincronizarAgora = async () => {
+  await fetch('/api/dashboard/sincronizar-agora', { method: 'POST' });
+  carregar();
+};
 carregar();
 </script>
 </body>
