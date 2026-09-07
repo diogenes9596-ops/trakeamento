@@ -201,6 +201,10 @@ async function carregarTabela() {
     totais.pix += parseInt(l.pix || 0, 10);
     totais.recusados += parseInt(l.recusados || 0, 10);
 
+    const nomeHtml = l.post_url
+      ? `<a href="${l.post_url}" target="_blank" rel="noopener" style="color:#7dc4ff; text-decoration:none;">${l.nome || l.id} ↗</a>`
+      : (l.nome || l.id);
+
     return `<tr>
       <td><input type="checkbox"></td>
       <td>
@@ -208,7 +212,7 @@ async function carregarTabela() {
           <input type="checkbox" ${l.status === 'ACTIVE' ? 'checked' : ''} onchange="alternarStatus('${l.id}', this)">
           <span class="trilho"></span>
         </label>
-        ${l.nome || l.id}
+        ${nomeHtml}
       </td>
       <td>${l.orcamento_diario ? formatarMoeda(l.orcamento_diario) + '/dia' : '--'}</td>
       <td>${l.lance ? formatarMoeda(l.lance) : '--'}</td>
