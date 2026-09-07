@@ -38,9 +38,9 @@ function montarTopbar(titulo, comFiltroData = true, comSeletorConta = true) {
         <select id="contaSelect" style="background:#171a21; border:1px solid #23262f; color:#e5e7eb; padding:6px 10px; border-radius:7px; font-size:12px;">
           <option value="">Todas as contas</option>
         </select>` : ''}
-        <span class="chip" data-periodo="hoje">Hoje</span>
+        <span class="chip ativo" data-periodo="hoje">Hoje</span>
         <span class="chip" data-periodo="ontem">Ontem</span>
-        <span class="chip ativo" data-periodo="7d">7d</span>
+        <span class="chip" data-periodo="7d">7d</span>
         <span class="chip" data-periodo="30d">30d</span>
         <input type="date" id="dataInicio">
         <input type="date" id="dataFim">
@@ -109,7 +109,7 @@ function iniciarFiltrosDeData(onAplicar) {
     document.getElementById('dataInicio').value = inicio.toISOString().slice(0, 10);
     document.getElementById('dataFim').value = hoje.toISOString().slice(0, 10);
   };
-  setPeriodo(7);
+  setPeriodo(0);
 
   document.querySelectorAll('.chip[data-periodo]').forEach((chip) => {
     chip.addEventListener('click', () => {
