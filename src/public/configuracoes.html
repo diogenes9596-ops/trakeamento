@@ -13,8 +13,9 @@
 <script>
 document.getElementById('layout').innerHTML = montarSidebar() + `
   <div class="conteudo">
-    ${montarTopbar('Configurações', false)}
+    ${montarTopbar('Configurações', true, false)}
     <main>
+      <p class="desc" style="text-transform:uppercase; letter-spacing:1px; font-size:11px; margin:0 0 16px;">• Cadastros operacionais</p>
       <div class="tabs-internas" style="padding:0 0 16px;">
         <button class="ativo" data-aba="contas">Contas de anúncio</button>
         <button data-aba="atendentes">Atendentes</button>
@@ -72,7 +73,10 @@ async function abaContas() {
     </div>
 
     <div class="painel">
-      <div class="painel-titulo">Contas cadastradas</div>
+      <div class="painel-titulo">
+        <span>Contas cadastradas</span>
+        <button onclick="redetectarMoedas()" style="background:transparent; color:#7dc4ff; font-size:11px;">Re-detectar moedas</button>
+      </div>
       <div class="tabela-scroll">
         <table>
           <thead><tr><th>Nome</th><th>BM ID</th><th>Account ID</th><th>Moeda</th><th>Status</th><th></th></tr></thead>
@@ -112,9 +116,22 @@ async function carregarContas() {
       <td style="font-family:monospace; font-size:11px;">${c.ad_account_id}</td>
       <td><span class="badge neutro">${c.moeda}</span></td>
       <td><span class="badge ${c.ativo ? 'bom' : 'neutro'}">${c.ativo ? 'ATIVO' : 'INATIVO'}</span></td>
-      <td><button class="danger" onclick="removerConta(${c.id})">Remover</button></td>
+      <td>
+        <button title="Ver token (últimos dígitos)" style="background:transparent; padding:4px 6px;" onclick="alert('Token termina em: ${c.token_final}')">🔑</button>
+        <button title="Remover" style="background:transparent; color:#ff8b8b; padding:4px 6px;" onclick="removerConta(${c.id})">🗑</button>
+      </td>
     </tr>
   `).join('');
+}
+
+async function redetectarMoedas() {
+  const resp = await fetch('/api/ad-accounts/redetectar-moedas', { method: 'POST' });
+  const data = await resp.json();
+  if (resp.ok) {
+    carregarContas();
+  } else {
+    alert(data.erro || 'Erro ao re-detectar moedas');
+  }
 }
 
 let ultimoLoteBmId = '', ultimoLoteToken = '';
@@ -467,6 +484,12 @@ function renderizarAba(aba) {
 }
 
 renderizarAba('contas');
+
+// O filtro de periodo aqui e so visual/consistencia com as outras abas
+iniciarFiltrosDeData(() => {});
+window.sincronizarAgora = async () => {
+  await fetch('/api/dashboard/sincronizar-agora', { method: 'POST' });
+};
 </script>
 </body>
 </html>

@@ -13,10 +13,10 @@
 <script>
 document.getElementById('layout').innerHTML = montarSidebar() + `
   <div class="conteudo">
-    ${montarTopbar('Eventos', false)}
+    ${montarTopbar('Eventos')}
     <main>
       <div class="secao">
-        <p class="desc" style="text-transform:uppercase; letter-spacing:1px; font-size:11px;">Lançamento manual de vendas</p>
+        <p class="desc" style="text-transform:uppercase; letter-spacing:1px; font-size:11px;">• Lançamento manual de vendas</p>
       </div>
 
       <div class="tabs-internas" style="padding:0 0 16px;">
@@ -203,6 +203,12 @@ function renderizarAba(aba) {
   funcoes[aba]();
 }
 
+// O filtro de periodo aqui e so visual/consistencia com as outras abas --
+// o formulario de lancamento manual nao depende de uma janela de datas.
+iniciarFiltrosDeData(() => {});
+window.sincronizarAgora = async () => {
+  await fetch('/api/dashboard/sincronizar-agora', { method: 'POST' });
+};
 renderizarAba('lancar');
 </script>
 </body>

@@ -117,7 +117,11 @@ async function salvarGastoDiario(adAccountDbId, moedaOriginal, registros) {
 
 // Roda a sincronizacao para todas as contas ativas, dos ultimos N dias
 // (isso cobre re-processamentos que a Meta faz nos numeros de atribuicao)
-async function sincronizarTodasContas(diasParaTras = 3) {
+// diasParaTras = 30 por padrao: garante que qualquer periodo que o usuario
+// escolha no dashboard (7d, 30d, etc) ja tenha o gasto puxado do Meta.
+// (o valor antigo de 3 dias fazia o total ficar bem menor que o real quando
+// o usuario olhava uma janela maior, tipo "7 dias")
+async function sincronizarTodasContas(diasParaTras = 30) {
   const contas = await pool.query('SELECT * FROM ad_accounts WHERE ativo = TRUE');
 
   const hoje = new Date();
@@ -151,7 +155,7 @@ async function sincronizarTodasContas(diasParaTras = 3) {
 async function sincronizarEstrutura(adAccountDbId, adAccountId, accessToken) {
   const camposCampanha = 'id,name,status,daily_budget,lifetime_budget';
   const camposAdset = 'id,name,status,campaign_id,daily_budget,bid_amount';
-  const camposAd = 'id,name,status,adset_id,campaign_id';
+  const camposAd = 'id,name,status,adset_id,campaign_id,creative{effective_object_story_id,thumbnail_url}';
 
   const [campanhas, adsets, ads] = await Promise.all([
     buscarTodasPaginas(`${GRAPH_BASE}/${adAccountId}/campaigns`, { fields: camposCampanha, access_token: accessToken, limit: 200 }),
@@ -180,11 +184,18 @@ async function sincronizarEstrutura(adAccountDbId, adAccountId, accessToken) {
   }
 
   for (const ad of ads) {
+    // effective_object_story_id vem no formato "{page_id}_{post_id}" -- convertemos
+    // pro link real do post no Facebook, pra abrir o criativo de verdade quando clicar
+    const storyId = ad.creative?.effective_object_story_id;
+    const postUrl = storyId ? `https://www.facebook.com/${storyId.replace('_', '/posts/')}/` : null;
+    const thumbnailUrl = ad.creative?.thumbnail_url || null;
+
     await pool.query(
-      `INSERT INTO meta_ads (id, adset_id, campaign_id, ad_account_id, nome, status, atualizado_em)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW())
-       ON CONFLICT (id) DO UPDATE SET nome=EXCLUDED.nome, status=EXCLUDED.status, atualizado_em=NOW()`,
-      [ad.id, ad.adset_id, ad.campaign_id, adAccountDbId, ad.name, ad.status]
+      `INSERT INTO meta_ads (id, adset_id, campaign_id, ad_account_id, nome, status, thumbnail_url, post_url, atualizado_em)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+       ON CONFLICT (id) DO UPDATE SET nome=EXCLUDED.nome, status=EXCLUDED.status,
+         thumbnail_url=EXCLUDED.thumbnail_url, post_url=EXCLUDED.post_url, atualizado_em=NOW()`,
+      [ad.id, ad.adset_id, ad.campaign_id, adAccountDbId, ad.name, ad.status, thumbnailUrl, postUrl]
     );
   }
 

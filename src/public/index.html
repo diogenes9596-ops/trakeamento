@@ -15,20 +15,44 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
   <div class="conteudo">
     ${montarTopbar('Overview')}
     <main>
+      <div class="secao-label">Resultado</div>
       <div class="cards">
-        <div class="card"><div class="label">Investido (total)</div><div class="valor" id="cInvestido">--</div></div>
-        <div class="card"><div class="label">Faturamento</div><div class="valor verde" id="cFaturamento">--</div></div>
-        <div class="card"><div class="label">ROAS</div><div class="valor" id="cRoas">--</div></div>
-        <div class="card"><div class="label">Lucro</div><div class="valor" id="cLucro">--</div></div>
-      </div>
-
-      <div class="painel secao">
-        <div class="painel-titulo">Evolução no período</div>
-        <div style="padding:16px;">
-          <svg id="grafico" width="100%" height="220" viewBox="0 0 1000 220" preserveAspectRatio="none"></svg>
+        <div class="card">
+          <div class="label">Investido (total)</div>
+          <div class="valor" id="cInvestido">--</div>
+          <div class="sub" id="cInvestidoSub">Investido: -- · Imposto: --</div>
+        </div>
+        <div class="card">
+          <div class="label">Faturamento</div>
+          <div class="valor verde" id="cFaturamento">--</div>
+          <div class="sub" id="cFaturamentoSub"></div>
+        </div>
+        <div class="card destaque">
+          <div class="label">ROAS</div>
+          <div class="valor azul" id="cRoas">--</div>
+          <div class="formula" id="cRoasFormula"></div>
+        </div>
+        <div class="card">
+          <div class="label">Lucro</div>
+          <div class="valor" id="cLucro">--</div>
+          <div class="sub" id="cLucroSub"></div>
         </div>
       </div>
 
+      <div class="secao-label">Evolução no período</div>
+      <div class="painel" style="margin-bottom:8px;">
+        <div class="painel-titulo">Evolução diária</div>
+        <div style="padding:16px;">
+          <svg id="grafico" width="100%" height="240" viewBox="0 0 1000 240" preserveAspectRatio="none"></svg>
+          <div style="display:flex; gap:18px; justify-content:center; margin-top:10px; font-size:11px; color:#9aa0ac;">
+            <span><span style="display:inline-block;width:14px;height:2px;background:#4ade80;vertical-align:middle;"></span> Faturamento</span>
+            <span><span style="display:inline-block;width:14px;height:2px;background:#f0995e;vertical-align:middle;"></span> Gasto</span>
+            <span><span style="display:inline-block;width:14px;height:2px;background:#2dd4bf;vertical-align:middle;border-top:2px dotted #2dd4bf;"></span> ROAS</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="secao-label">Funil de conversão</div>
       <div class="cards">
         <div class="card"><div class="label">Leads</div><div class="valor" id="cLeads">--</div></div>
         <div class="card"><div class="label">CPL</div><div class="valor" id="cCpl">--</div></div>
@@ -36,9 +60,32 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
         <div class="card"><div class="label">CPA</div><div class="valor" id="cCpa">--</div></div>
       </div>
 
+      <div class="secao-label">Transações do gateway</div>
       <div class="cards">
-        <div class="card"><div class="label">Agendamentos (Pay After Delivery)</div><div class="valor" id="cAgendamentos">--</div></div>
-        <div class="card"><div class="label">Faturamento agendado</div><div class="valor" id="cFatAgendado">--</div></div>
+        <div class="card"><div class="label">Boletos gerados</div><div class="valor" id="cBoletos">--</div></div>
+        <div class="card"><div class="label">Pix gerados</div><div class="valor" id="cPix">--</div></div>
+        <div class="card"><div class="label">Cartões recusados</div><div class="valor" id="cRecusados">--</div></div>
+      </div>
+
+      <div class="secao-label">Agendamentos (Pay After Delivery)</div>
+      <div class="cards">
+        <div class="card">
+          <div class="label">Agendamentos</div>
+          <div class="valor" id="cAgendamentos">--</div>
+          <div class="sub">pedidos a pagar na entrega</div>
+        </div>
+        <div class="card">
+          <div class="label">Faturamento agendado</div>
+          <div class="valor" id="cFatAgendado">--</div>
+          <div class="sub">a receber quando pagar</div>
+        </div>
+      </div>
+
+      <div class="secao-label">Tráfego &amp; qualidade</div>
+      <div class="cards">
+        <div class="card"><div class="label">Cliques</div><div class="valor" id="cCliques">--</div></div>
+        <div class="card"><div class="label">CPC</div><div class="valor" id="cCpc">--</div></div>
+        <div class="card"><div class="label">Match rate</div><div class="valor" id="cMatchRate">--</div></div>
       </div>
     </main>
   </div>
@@ -49,26 +96,41 @@ async function carregar() {
   const fim = document.getElementById('dataFim').value;
   const qs = `?data_inicio=${inicio}&data_fim=${fim}`;
 
-  const [totais, funil, serie] = await Promise.all([
-    fetch('/api/dashboard/totais' + qs).then(r => r.json()),
-    fetch('/api/dashboard/funil' + qs).then(r => r.json()),
+  const [ov, serie] = await Promise.all([
+    fetch('/api/dashboard/overview' + qs).then(r => r.json()),
     fetch('/api/dashboard/serie-diaria' + qs).then(r => r.json()),
   ]);
 
-  document.getElementById('cInvestido').textContent = formatarMoeda(totais.gasto_total);
-  document.getElementById('cFaturamento').textContent = formatarMoeda(totais.faturamento_total);
-  document.getElementById('cRoas').textContent = totais.roas_geral ? totais.roas_geral + 'x' : '--';
-  const lucro = totais.faturamento_total - totais.gasto_total;
-  const lucroEl = document.getElementById('cLucro');
-  lucroEl.textContent = formatarMoeda(lucro);
-  lucroEl.className = 'valor ' + (lucro >= 0 ? 'verde' : 'vermelho');
+  document.getElementById('cInvestido').textContent = formatarMoeda(ov.investido_total);
+  document.getElementById('cInvestidoSub').textContent = `Investido: ${formatarMoeda(ov.gasto_total)} · Imposto: ${formatarMoeda(ov.imposto)}`;
 
-  document.getElementById('cLeads').textContent = funil.leads;
-  document.getElementById('cCpl').textContent = funil.cpl !== null ? formatarMoeda(funil.cpl) : '--';
-  document.getElementById('cVendas').textContent = funil.vendas;
-  document.getElementById('cCpa').textContent = funil.cpa !== null ? formatarMoeda(funil.cpa) : '--';
-  document.getElementById('cAgendamentos').textContent = funil.agendamentos;
-  document.getElementById('cFatAgendado').textContent = formatarMoeda(funil.faturamento_agendado);
+  document.getElementById('cFaturamento').textContent = formatarMoeda(ov.faturamento_total);
+  document.getElementById('cFaturamentoSub').textContent = ov.faturamento_por_plataforma
+    .map(p => `${p.plataforma}: ${formatarMoeda(p.total)}`).join(' · ') || 'Nenhuma venda no período';
+
+  document.getElementById('cRoas').textContent = ov.roas_geral !== null ? ov.roas_geral.toFixed(2) + 'x' : '--';
+  document.getElementById('cRoasFormula').textContent = `${formatarMoeda(ov.faturamento_total)} / ${formatarMoeda(ov.investido_total)}`;
+
+  const lucroEl = document.getElementById('cLucro');
+  lucroEl.textContent = formatarMoeda(ov.lucro);
+  lucroEl.className = 'valor ' + (ov.lucro >= 0 ? 'verde' : 'vermelho');
+  document.getElementById('cLucroSub').textContent = ov.lucro >= 0 ? 'lucro no período' : 'prejuízo no período';
+
+  document.getElementById('cLeads').textContent = ov.leads;
+  document.getElementById('cCpl').textContent = ov.cpl !== null ? formatarMoeda(ov.cpl) : '--';
+  document.getElementById('cVendas').textContent = ov.vendas;
+  document.getElementById('cCpa').textContent = ov.cpa !== null ? formatarMoeda(ov.cpa) : '--';
+
+  document.getElementById('cBoletos').textContent = ov.boletos_gerados;
+  document.getElementById('cPix').textContent = ov.pix_gerados;
+  document.getElementById('cRecusados').textContent = ov.cartoes_recusados;
+
+  document.getElementById('cAgendamentos').textContent = ov.agendamentos;
+  document.getElementById('cFatAgendado').textContent = formatarMoeda(ov.faturamento_agendado);
+
+  document.getElementById('cCliques').textContent = ov.cliques.toLocaleString('pt-BR');
+  document.getElementById('cCpc').textContent = ov.cpc !== null ? formatarMoeda(ov.cpc) : '--';
+  document.getElementById('cMatchRate').textContent = ov.match_rate !== null ? ov.match_rate.toFixed(1) + '%' : '--';
 
   desenharGrafico(serie);
 }
@@ -77,19 +139,45 @@ function desenharGrafico(serie) {
   const svg = document.getElementById('grafico');
   if (!serie || serie.length === 0) { svg.innerHTML = ''; return; }
 
-  const maxValor = Math.max(...serie.map(d => Math.max(parseFloat(d.gasto), parseFloat(d.faturamento))), 1);
-  const largura = 1000, altura = 220, margem = 10;
-  const passoX = (largura - margem * 2) / Math.max(serie.length - 1, 1);
+  const largura = 1000, altura = 240, margemEsq = 50, margemDir = 50, margemY = 16;
+  const maxMoeda = Math.max(...serie.map(d => Math.max(parseFloat(d.gasto), parseFloat(d.faturamento))), 1);
+  const maxRoas = Math.max(...serie.map(d => parseFloat(d.roas) || 0), 1);
+  const passoX = (largura - margemEsq - margemDir) / Math.max(serie.length - 1, 1);
 
-  const pontos = (campo) => serie.map((d, i) => {
-    const x = margem + i * passoX;
-    const y = altura - margem - ((parseFloat(d[campo]) / maxValor) * (altura - margem * 2));
+  const pontosMoeda = (campo) => serie.map((d, i) => {
+    const x = margemEsq + i * passoX;
+    const y = altura - margemY - ((parseFloat(d[campo]) / maxMoeda) * (altura - margemY * 2));
     return `${x},${y}`;
   }).join(' ');
 
+  const pontosRoas = serie.map((d, i) => {
+    const x = margemEsq + i * passoX;
+    const val = parseFloat(d.roas) || 0;
+    const y = altura - margemY - ((val / maxRoas) * (altura - margemY * 2));
+    return `${x},${y}`;
+  }).join(' ');
+
+  const rotuloY = (v, sufixo) => v.toLocaleString('pt-BR', { maximumFractionDigits: sufixo === 'x' ? 1 : 0 });
+
+  let escalasEsq = '';
+  for (let i = 0; i <= 3; i++) {
+    const valor = (maxMoeda / 3) * i;
+    const y = altura - margemY - ((valor / maxMoeda) * (altura - margemY * 2));
+    escalasEsq += `<text x="4" y="${y + 4}" font-size="10" fill="#6b7280">R$${rotuloY(valor)}</text>`;
+  }
+  let escalasDir = '';
+  for (let i = 0; i <= 3; i++) {
+    const valor = (maxRoas / 3) * i;
+    const y = altura - margemY - ((valor / maxRoas) * (altura - margemY * 2));
+    escalasDir += `<text x="${largura - 44}" y="${y + 4}" font-size="10" fill="#6b7280">${rotuloY(valor, 'x')}x</text>`;
+  }
+
   svg.innerHTML = `
-    <polyline points="${pontos('gasto')}" fill="none" stroke="#ff8b8b" stroke-width="2" />
-    <polyline points="${pontos('faturamento')}" fill="none" stroke="#4ade80" stroke-width="2" />
+    ${escalasEsq}
+    ${escalasDir}
+    <polyline points="${pontosMoeda('faturamento')}" fill="none" stroke="#4ade80" stroke-width="2" />
+    <polyline points="${pontosMoeda('gasto')}" fill="none" stroke="#f0995e" stroke-width="2" />
+    <polyline points="${pontosRoas}" fill="none" stroke="#2dd4bf" stroke-width="2" stroke-dasharray="4,3" />
   `;
 }
 

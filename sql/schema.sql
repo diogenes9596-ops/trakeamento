@@ -183,3 +183,12 @@ CREATE TABLE IF NOT EXISTS produtos_manuais (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Colunas extras pra deixar campanhas/conjuntos/anuncios com o mesmo formato
+-- (a tela de Campanhas usa a mesma consulta pros 3 niveis, entao todos
+-- precisam ter as mesmas colunas disponiveis, mesmo que fiquem nulas)
+ALTER TABLE meta_campaigns ADD COLUMN IF NOT EXISTS lance NUMERIC(12,2);
+ALTER TABLE meta_ads ADD COLUMN IF NOT EXISTS orcamento_diario NUMERIC(12,2);
+ALTER TABLE meta_ads ADD COLUMN IF NOT EXISTS lance NUMERIC(12,2);
+ALTER TABLE meta_ads ADD COLUMN IF NOT EXISTS thumbnail_url VARCHAR(1000);
+ALTER TABLE meta_ads ADD COLUMN IF NOT EXISTS post_url VARCHAR(500);
+

@@ -5,6 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Criativos - Painel de Rastreamento</title>
 <link rel="stylesheet" href="/estilos.css">
+<style>
+  .linha-criativo { display: flex; align-items: center; gap: 12px; }
+  .rank {
+    width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; font-size: 11px; font-weight: 700; background: #23262f; color: #9aa0ac; flex-shrink: 0;
+  }
+  .rank.top { background: #4a3510; color: #f0c96b; }
+  .thumb {
+    width: 34px; height: 34px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: #23262f;
+  }
+  .thumb-placeholder {
+    width: 34px; height: 34px; border-radius: 8px; background: #171a21; border: 1px dashed #2a2f3a;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #4b5563; font-size: 14px;
+  }
+  .info-criativo { min-width: 0; }
+  .nome-criativo { display: flex; align-items: center; gap: 6px; }
+  .nome-criativo a { color: #7dc4ff; text-decoration: none; font-weight: 600; }
+  .nome-criativo a:hover { text-decoration: underline; }
+  .nome-criativo span.sem-link { color: #e5e7eb; font-weight: 600; }
+  .sub-criativo { font-size: 11px; color: #6b7280; margin-top: 2px; }
+  .sub-criativo .ativos { color: #4ade80; }
+  .cpl-sub { color: #6b7280; font-size: 10.5px; margin-top: 2px; }
+</style>
 </head>
 <body>
 <div class="layout" id="layout"></div>
@@ -15,27 +38,28 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
   <div class="conteudo">
     ${montarTopbar('Criativos')}
     <main>
-      <p style="color:#6b7280; margin-top:-6px; margin-bottom:16px;">
-        O mesmo criativo (anúncios de mesmo nome) somado numa linha. Ordene por vendas, ROAS, lucro pra decidir o que escalar e o que matar.
-      </p>
       <div class="painel">
-        <div class="tabs-internas">
-          <button class="ativo" data-ordenar="vendas">Vendas</button>
-          <button data-ordenar="roas">ROAS</button>
-          <button data-ordenar="faturamento">Faturamento</button>
-          <button data-ordenar="lucro">Lucro</button>
-          <button data-ordenar="investido">Investido</button>
-          <button data-ordenar="leads">Leads</button>
+        <div style="padding:14px 16px 0; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <span style="font-size:10px; color:#6b7280; text-transform:uppercase; letter-spacing:1px;">Ordenar por</span>
+          <div class="tabs-internas" style="padding:0;">
+            <button class="ativo" data-ordenar="vendas">Vendas</button>
+            <button data-ordenar="roas">ROAS</button>
+            <button data-ordenar="faturamento">Faturamento</button>
+            <button data-ordenar="lucro">Lucro</button>
+            <button data-ordenar="investido">Investido</button>
+            <button data-ordenar="leads">Leads</button>
+            <button data-ordenar="cpa">CPA (menor)</button>
+          </div>
         </div>
-        <div class="tabela-scroll">
+        <div class="tabela-scroll" style="margin-top:10px;">
           <table>
             <thead>
               <tr>
                 <th>#</th><th>Criativo</th><th>Investido</th><th>Leads</th>
-                <th>Vendas</th><th>Faturamento</th><th>Lucro</th><th>ROAS</th><th>CPA</th>
+                <th>Vendas</th><th>Faturam.</th><th>Lucro</th><th>ROAS</th>
               </tr>
             </thead>
-            <tbody id="corpo"><tr><td colspan="9">Carregando...</td></tr></tbody>
+            <tbody id="corpo"><tr><td colspan="8">Carregando...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -54,34 +78,57 @@ document.querySelectorAll('.tabs-internas button').forEach((btn) => {
   });
 });
 
+function iconePlaceholder() {
+  return `<div class="thumb-placeholder">🖼</div>`;
+}
+
 async function carregar() {
   const inicio = document.getElementById('dataInicio').value;
   const fim = document.getElementById('dataFim').value;
-  const linhas = await fetch(`/api/dashboard/criativos?data_inicio=${inicio}&data_fim=${fim}&ordenar=${ordenarAtual}`).then(r => r.json());
+  const contaId = window.contaFiltro || '';
+  const linhas = await fetch(`/api/dashboard/criativos?data_inicio=${inicio}&data_fim=${fim}&ordenar=${ordenarAtual}&conta_id=${contaId}`).then(r => r.json());
 
   const corpo = document.getElementById('corpo');
   if (!linhas || linhas.length === 0) {
-    corpo.innerHTML = '<tr><td colspan="9">Nenhum dado no período.</td></tr>';
+    corpo.innerHTML = '<tr><td colspan="8">Nenhum dado no período.</td></tr>';
     return;
   }
 
   corpo.innerHTML = linhas.map((l, i) => {
     const roasBadge = l.roas === null ? '--' : `<span class="badge ${l.roas >= 2 ? 'bom' : 'ruim'}">${l.roas}x</span>`;
     const lucroClasse = l.lucro >= 0 ? 'verde' : 'vermelho';
-    const link = linkAdsManager(l.meta_account_id, l.exemplo_ad_id);
-    const nomeCel = link
-      ? `<a href="${link}" target="_blank" style="color:#e5e7eb; text-decoration:none;">${l.criativo} <span style="color:#4ade80;">↗</span></a>`
-      : l.criativo;
+    const rankClasse = i < 3 ? 'rank top' : 'rank';
+
+    const imagem = l.thumbnail_url
+      ? `<img class="thumb" src="${l.thumbnail_url}" alt="">`
+      : iconePlaceholder();
+
+    const nomeHtml = l.post_url
+      ? `<a href="${l.post_url}" target="_blank" rel="noopener">${l.criativo} ↗</a>`
+      : `<span class="sem-link">${l.criativo}</span>`;
+
+    const subInfo = `${l.qtd_campanhas} camp. · ${l.qtd_anuncios} anúncio${l.qtd_anuncios == 1 ? '' : 's'} · <span class="ativos">${l.qtd_ativos} ativo${l.qtd_ativos == 1 ? '' : 's'}</span>${l.qtd_contas > 1 ? ' · ' + l.qtd_contas + ' contas' : ''}`;
+
     return `<tr>
-      <td>${i + 1}</td>
-      <td>${nomeCel}<div style="color:#6b7280; font-size:11px;">${l.qtd_anuncios} anúncio(s)</div></td>
-      <td>${formatarMoeda(l.investido)}</td>
-      <td>${l.leads}</td>
-      <td>${l.vendas}</td>
-      <td>${formatarMoeda(l.faturamento)}</td>
+      <td><span class="${rankClasse}">${i + 1}</span></td>
+      <td>
+        <div class="linha-criativo">
+          ${imagem}
+          <div class="info-criativo">
+            <div class="nome-criativo">${nomeHtml}</div>
+            <div class="sub-criativo">${subInfo}</div>
+          </div>
+        </div>
+      </td>
+      <td>${l.investido > 0 ? formatarMoeda(l.investido) : '--'}</td>
+      <td>
+        ${l.leads || '--'}
+        ${l.cpl !== null ? `<div class="cpl-sub">${formatarMoeda(l.cpl)}</div>` : ''}
+      </td>
+      <td>${l.vendas || '--'}</td>
+      <td>${l.faturamento > 0 ? formatarMoeda(l.faturamento) : '--'}</td>
       <td><span class="valor ${lucroClasse}" style="font-size:12.5px; font-weight:600;">${formatarMoeda(l.lucro)}</span></td>
       <td>${roasBadge}</td>
-      <td>${l.cpa !== null ? formatarMoeda(l.cpa) : '--'}</td>
     </tr>`;
   }).join('');
 }

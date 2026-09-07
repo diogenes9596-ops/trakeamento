@@ -19,6 +19,7 @@
   .toggle input:checked + .trilho { background: #22c55e; }
   .toggle input:checked + .trilho:before { transform: translateX(15px); }
   .toggle input:disabled + .trilho { opacity: 0.5; cursor: default; }
+  tfoot td { font-weight: 700; border-top: 2px solid #23262f; background: #12151c; }
 </style>
 </head>
 <body>
@@ -36,8 +37,16 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
           <div class="valor" id="cInvestido">--</div>
           <div class="sub" id="cInvestidoSub">Investido: -- · Imposto: --</div>
         </div>
-        <div class="card"><div class="label">Faturamento</div><div class="valor verde" id="cFaturamento">--</div></div>
-        <div class="card"><div class="label">Lucro</div><div class="valor" id="cLucro">--</div></div>
+        <div class="card">
+          <div class="label">Faturamento</div>
+          <div class="valor verde" id="cFaturamento">--</div>
+          <div class="sub" id="cFaturamentoSub"></div>
+        </div>
+        <div class="card">
+          <div class="label">Lucro</div>
+          <div class="valor" id="cLucro">--</div>
+          <div class="sub" id="cLucroSub"></div>
+        </div>
       </div>
 
       <div class="cards">
@@ -70,21 +79,28 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
           <table>
             <thead>
               <tr>
-                <th></th>
-                <th id="colNome">Campanha</th>
+                <th><input type="checkbox" disabled></th>
+                <th id="colNome">Campanhas</th>
                 <th>Orçamento</th>
+                <th>Lance</th>
                 <th>Gasto</th>
-                <th>Leads</th>
-                <th>CPL</th>
                 <th>Vendas</th>
                 <th>CPA</th>
                 <th>Faturamento</th>
                 <th>Lucro</th>
                 <th>ROAS</th>
                 <th>Agendamento</th>
+                <th>CPA Agend.</th>
+                <th>Leads</th>
+                <th>CPL</th>
+                <th>Boletos</th>
+                <th>Pix Ger</th>
+                <th>Recusados</th>
+                <th>Conta</th>
               </tr>
             </thead>
-            <tbody id="corpo"><tr><td colspan="12">Carregando...</td></tr></tbody>
+            <tbody id="corpo"><tr><td colspan="18">Carregando...</td></tr></tbody>
+            <tfoot id="rodape"></tfoot>
           </table>
         </div>
       </div>
@@ -94,7 +110,7 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
 
 let nivelAtual = 'campanhas';
 let statusAtual = 'todas';
-const nomesColuna = { campanhas: 'Campanha', conjuntos: 'Conjunto', anuncios: 'Anúncio' };
+const nomesColuna = { campanhas: 'Campanhas', conjuntos: 'Conjuntos', anuncios: 'Anúncios' };
 
 document.querySelectorAll('.tabs-internas button').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -126,69 +142,121 @@ async function carregarCards() {
   const fim = document.getElementById('dataFim').value;
   const qs = `?data_inicio=${inicio}&data_fim=${fim}`;
 
-  const [totais, funil, gateway] = await Promise.all([
-    fetch('/api/dashboard/totais' + qs).then(r => r.json()),
-    fetch('/api/dashboard/funil' + qs).then(r => r.json()),
-    fetch('/api/dashboard/gateway' + qs).then(r => r.json()),
-  ]);
+  const ov = await fetch('/api/dashboard/overview' + qs).then(r => r.json());
 
-  document.getElementById('cInvestido').textContent = formatarMoeda(totais.investido_total);
-  document.getElementById('cInvestidoSub').textContent = `Investido: ${formatarMoeda(totais.gasto_total)} · Imposto: ${formatarMoeda(totais.imposto)}`;
-  document.getElementById('cFaturamento').textContent = formatarMoeda(totais.faturamento_total);
+  document.getElementById('cInvestido').textContent = formatarMoeda(ov.investido_total);
+  document.getElementById('cInvestidoSub').textContent = `Investido: ${formatarMoeda(ov.gasto_total)} · Imposto: ${formatarMoeda(ov.imposto)}`;
 
-  const lucro = totais.faturamento_total - totais.investido_total;
+  document.getElementById('cFaturamento').textContent = formatarMoeda(ov.faturamento_total);
+  document.getElementById('cFaturamentoSub').textContent = ov.faturamento_por_plataforma
+    .map(p => `${p.plataforma}: ${formatarMoeda(p.total)}`).join(' · ') || '--';
+
   const lucroEl = document.getElementById('cLucro');
-  lucroEl.textContent = formatarMoeda(lucro);
-  lucroEl.className = 'valor ' + (lucro >= 0 ? 'verde' : 'vermelho');
+  lucroEl.textContent = formatarMoeda(ov.lucro);
+  lucroEl.className = 'valor ' + (ov.lucro >= 0 ? 'verde' : 'vermelho');
+  document.getElementById('cLucroSub').textContent = ov.lucro >= 0 ? 'lucro' : 'prejuízo';
 
-  document.getElementById('cLeads').textContent = funil.leads;
-  document.getElementById('cVendas').textContent = funil.vendas;
-  document.getElementById('cCpa').textContent = funil.cpa !== null ? formatarMoeda(funil.cpa) : '--';
+  document.getElementById('cLeads').textContent = ov.leads;
+  document.getElementById('cVendas').textContent = ov.vendas;
+  document.getElementById('cCpa').textContent = ov.cpa !== null ? formatarMoeda(ov.cpa) : '--';
 
-  document.getElementById('cBoletos').textContent = gateway.boletos_gerados;
-  document.getElementById('cPix').textContent = gateway.pix_gerados;
-  document.getElementById('cRecusados').textContent = gateway.cartoes_recusados;
+  document.getElementById('cBoletos').textContent = ov.boletos_gerados;
+  document.getElementById('cPix').textContent = ov.pix_gerados;
+  document.getElementById('cRecusados').textContent = ov.cartoes_recusados;
 }
 
 async function carregarTabela() {
   const inicio = document.getElementById('dataInicio').value;
   const fim = document.getElementById('dataFim').value;
   const busca = document.getElementById('busca').value;
-  const dados = await fetch(`/api/dashboard/campanhas?data_inicio=${inicio}&data_fim=${fim}&nivel=${nivelAtual}&status=${statusAtual}&busca=${encodeURIComponent(busca)}`).then(r => r.json());
+  const contaId = window.contaFiltro || '';
+  const dados = await fetch(`/api/dashboard/campanhas?data_inicio=${inicio}&data_fim=${fim}&nivel=${nivelAtual}&status=${statusAtual}&busca=${encodeURIComponent(busca)}&conta_id=${contaId}`).then(r => r.json());
 
   const corpo = document.getElementById('corpo');
+  const rodape = document.getElementById('rodape');
+
   if (!dados.linhas || dados.linhas.length === 0) {
-    corpo.innerHTML = '<tr><td colspan="12">Nenhum dado no período.</td></tr>';
+    corpo.innerHTML = '<tr><td colspan="18">Nenhum dado no período.</td></tr>';
+    rodape.innerHTML = '';
     return;
   }
 
+  const totais = { gasto: 0, vendas: 0, faturamento: 0, agendamentos: 0, faturamento_agendado: 0, leads: 0, boletos: 0, pix: 0, recusados: 0 };
+
   corpo.innerHTML = dados.linhas.map(l => {
-    const lucro = parseFloat(l.faturamento) - parseFloat(l.gasto_total);
-    const roas = l.gasto_total > 0 ? (l.faturamento / l.gasto_total) : null;
-    const cpl = l.leads > 0 ? (l.gasto_total / l.leads) : null;
-    const cpa = l.vendas > 0 ? (l.gasto_total / l.vendas) : null;
-    const ativo = l.status === 'ACTIVE';
+    const gasto = parseFloat(l.gasto_total);
+    const faturamento = parseFloat(l.faturamento);
+    const lucro = faturamento - gasto;
+    const roas = gasto > 0 ? (faturamento / gasto) : null;
+    const cpl = l.leads > 0 ? (gasto / l.leads) : null;
+    const cpa = l.vendas > 0 ? (gasto / l.vendas) : null;
+    const cpaAgend = l.agendamentos > 0 ? (gasto / l.agendamentos) : null;
+
+    totais.gasto += gasto;
+    totais.vendas += l.vendas || 0;
+    totais.faturamento += faturamento;
+    totais.agendamentos += l.agendamentos || 0;
+    totais.leads += l.leads || 0;
+    totais.boletos += l.boletos || 0;
+    totais.pix += l.pix || 0;
+    totais.recusados += l.recusados || 0;
 
     return `<tr>
+      <td><input type="checkbox"></td>
       <td>
-        <label class="toggle">
-          <input type="checkbox" ${ativo ? 'checked' : ''} onchange="alternarStatus('${l.id}', this)">
+        <label class="toggle" style="vertical-align:middle; margin-right:8px;">
+          <input type="checkbox" ${l.status === 'ACTIVE' ? 'checked' : ''} onchange="alternarStatus('${l.id}', this)">
           <span class="trilho"></span>
         </label>
+        ${l.nome || l.id}
       </td>
-      <td>${l.nome || l.id}</td>
       <td>${l.orcamento_diario ? formatarMoeda(l.orcamento_diario) + '/dia' : '--'}</td>
-      <td>${formatarMoeda(l.gasto_total)}</td>
-      <td>${l.leads || 0}</td>
-      <td>${cpl !== null ? formatarMoeda(cpl) : '--'}</td>
+      <td>${l.lance ? formatarMoeda(l.lance) : '--'}</td>
+      <td>${formatarMoeda(gasto)}</td>
       <td>${l.vendas || 0}</td>
       <td>${cpa !== null ? formatarMoeda(cpa) : '--'}</td>
-      <td>${formatarMoeda(l.faturamento)}</td>
+      <td>${formatarMoeda(faturamento)}</td>
       <td style="color:${lucro >= 0 ? '#4ade80' : '#ff8b8b'}">${formatarMoeda(lucro)}</td>
       <td>${roas !== null ? `<span class="badge ${roas >= 2 ? 'bom' : 'ruim'}">${roas.toFixed(2)}x</span>` : '--'}</td>
       <td>${l.agendamentos || 0}</td>
+      <td>${cpaAgend !== null ? formatarMoeda(cpaAgend) : '--'}</td>
+      <td>${l.leads || 0}</td>
+      <td>${cpl !== null ? formatarMoeda(cpl) : '--'}</td>
+      <td>${l.boletos || 0}</td>
+      <td>${l.pix || 0}</td>
+      <td>${l.recusados || 0}</td>
+      <td>${l.conta || '--'}</td>
     </tr>`;
   }).join('');
+
+  const roasTotal = totais.gasto > 0 ? (totais.faturamento / totais.gasto) : null;
+  const cpaTotal = totais.vendas > 0 ? (totais.gasto / totais.vendas) : null;
+  const cpaAgendTotal = totais.agendamentos > 0 ? (totais.gasto / totais.agendamentos) : null;
+  const cplTotal = totais.leads > 0 ? (totais.gasto / totais.leads) : null;
+  const lucroTotal = totais.faturamento - totais.gasto;
+
+  rodape.innerHTML = `
+    <tr>
+      <td></td>
+      <td>TOTAL <span style="font-weight:400; color:#6b7280;">${dados.linhas.length} ${nomesColuna[nivelAtual].toLowerCase()}</span></td>
+      <td>--</td>
+      <td>--</td>
+      <td>${formatarMoeda(totais.gasto)}</td>
+      <td>${totais.vendas}</td>
+      <td>${cpaTotal !== null ? formatarMoeda(cpaTotal) : '--'}</td>
+      <td>${formatarMoeda(totais.faturamento)}</td>
+      <td style="color:${lucroTotal >= 0 ? '#4ade80' : '#ff8b8b'}">${formatarMoeda(lucroTotal)}</td>
+      <td>${roasTotal !== null ? roasTotal.toFixed(2) + 'x' : '--'}</td>
+      <td>${totais.agendamentos}</td>
+      <td>${cpaAgendTotal !== null ? formatarMoeda(cpaAgendTotal) : '--'}</td>
+      <td>${totais.leads}</td>
+      <td>${cplTotal !== null ? formatarMoeda(cplTotal) : '--'}</td>
+      <td>${totais.boletos}</td>
+      <td>${totais.pix}</td>
+      <td>${totais.recusados}</td>
+      <td></td>
+    </tr>
+  `;
 }
 
 async function alternarStatus(id, checkbox) {

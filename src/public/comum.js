@@ -25,7 +25,7 @@ function montarSidebar() {
   `;
 }
 
-function montarTopbar(titulo, comFiltroData = true) {
+function montarTopbar(titulo, comFiltroData = true, comSeletorConta = true) {
   return `
     <div class="topbar">
       <div>
@@ -34,6 +34,10 @@ function montarTopbar(titulo, comFiltroData = true) {
       </div>
       ${comFiltroData ? `
       <div class="filtros">
+        ${comSeletorConta ? `
+        <select id="contaSelect" style="background:#171a21; border:1px solid #23262f; color:#e5e7eb; padding:6px 10px; border-radius:7px; font-size:12px;">
+          <option value="">Todas as contas</option>
+        </select>` : ''}
         <span class="chip" data-periodo="hoje">Hoje</span>
         <span class="chip" data-periodo="ontem">Ontem</span>
         <span class="chip ativo" data-periodo="7d">7d</span>
@@ -54,7 +58,21 @@ function formatarMoeda(v) {
 function formatarData(iso) {
   if (!iso) return '--';
   const d = new Date(iso);
-  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+// Formata telefone bruto (só dígitos, com DDI) pro padrao +55 (DD) 99999-9999
+function formatarTelefone(tel) {
+  if (!tel) return '--';
+  const d = String(tel).replace(/\D/g, '');
+  if (d.length < 12) return '+' + d;
+  const cc = d.slice(0, 2);
+  const ddd = d.slice(2, 4);
+  const resto = d.slice(4);
+  if (resto.length === 9) {
+    return `+${cc} (${ddd}) ${resto.slice(0, 5)}-${resto.slice(5)}`;
+  }
+  return `+${cc} (${ddd}) ${resto.slice(0, 4)}-${resto.slice(4)}`;
 }
 
 // Monta o link direto pro anuncio dentro do Gerenciador de Anuncios do Meta
@@ -63,6 +81,26 @@ function linkAdsManager(metaAccountId, adId) {
   const contaNumero = metaAccountId.replace('act_', '');
   return `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${contaNumero}&selected_ad_ids=${adId}`;
 }
+
+async function carregarContasNoSeletor() {
+  const select = document.getElementById('contaSelect');
+  if (!select) return;
+  try {
+    const contas = await fetch('/api/ad-accounts').then(r => r.json());
+    contas.forEach((c) => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.nome;
+      select.appendChild(opt);
+    });
+    select.addEventListener('change', () => {
+      window.contaFiltro = select.value;
+      window.aplicarFiltro && window.aplicarFiltro();
+    });
+  } catch (e) { /* silencioso: dropdown so nao vem populado */ }
+}
+
+window.contaFiltro = '';
 
 function iniciarFiltrosDeData(onAplicar) {
   const hoje = new Date();
@@ -90,6 +128,7 @@ function iniciarFiltrosDeData(onAplicar) {
   });
 
   window.aplicarFiltro = onAplicar;
+  carregarContasNoSeletor();
 }
 
 async function verificarLogin() {

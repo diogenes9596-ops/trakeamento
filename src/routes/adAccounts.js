@@ -96,6 +96,30 @@ router.post('/importar-lote', async (req, res) => {
   }
 });
 
+// Busca a moeda de novo pra cada conta cadastrada (util se a Meta mudar a
+// moeda da conta, ou se ela veio errada na primeira sincronizacao)
+router.post('/redetectar-moedas', async (req, res) => {
+  try {
+    const contas = await pool.query('SELECT * FROM ad_accounts');
+    const resultados = [];
+
+    for (const conta of contas.rows) {
+      const teste = await testarConexaoContaAnuncio(conta.ad_account_id, conta.access_token);
+      if (teste.ok && teste.dados?.currency) {
+        await pool.query('UPDATE ad_accounts SET moeda = $1 WHERE id = $2', [teste.dados.currency, conta.id]);
+        resultados.push({ conta: conta.nome, moeda: teste.dados.currency, ok: true });
+      } else {
+        resultados.push({ conta: conta.nome, ok: false, erro: teste.mensagem });
+      }
+    }
+
+    res.json({ resultados });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao re-detectar moedas' });
+  }
+});
+
 router.patch('/:id/status', async (req, res) => {
   const { ativo } = req.body;
   try {

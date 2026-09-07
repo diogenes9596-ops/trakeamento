@@ -204,9 +204,11 @@ router.get('/campanhas', async (req, res) => {
   const nivel = ['campanhas', 'conjuntos', 'anuncios'].includes(req.query.nivel) ? req.query.nivel : 'campanhas';
   const statusFiltro = ['todas', 'ativas', 'pausadas'].includes(req.query.status) ? req.query.status : 'todas';
   const busca = (req.query.busca || '').trim();
+  const contaId = req.query.conta_id && req.query.conta_id !== 'todas' ? parseInt(req.query.conta_id, 10) : null;
 
   const tabela = { campanhas: 'meta_campaigns', conjuntos: 'meta_adsets', anuncios: 'meta_ads' }[nivel];
   const colunaGasto = { campanhas: 'campaign_id', conjuntos: 'adset_id', anuncios: 'ad_id' }[nivel];
+  const colunaMapa = { campanhas: 'campaign_id', conjuntos: 'adset_id', anuncios: 'id' }[nivel];
 
   try {
     const condicoes = [];
@@ -218,10 +220,17 @@ router.get('/campanhas', async (req, res) => {
       params.push(`%${busca}%`);
       condicoes.push(`e.nome ILIKE $${params.length}`);
     }
+    if (contaId) {
+      params.push(contaId);
+      condicoes.push(`e.ad_account_id = $${params.length}`);
+    }
     const whereExtra = condicoes.length ? `AND ${condicoes.join(' AND ')}` : '';
 
     const result = await pool.query(
-      `WITH gasto AS (
+      `WITH mapa AS (
+         SELECT id as ad_id, ${colunaMapa} as grupo_id FROM meta_ads WHERE ${colunaMapa} IS NOT NULL
+       ),
+       gasto AS (
          SELECT ${colunaGasto} as id, SUM(gasto) as gasto_total,
                 SUM(impressoes) as impressoes, SUM(cliques) as cliques
          FROM ad_spend_daily
@@ -229,20 +238,28 @@ router.get('/campanhas', async (req, res) => {
          GROUP BY ${colunaGasto}
        ),
        leads_ AS (
-         SELECT ad_id, COUNT(*) as qtd FROM leads
-         WHERE recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day') AND ad_id IS NOT NULL
-         GROUP BY ad_id
+         SELECT m.grupo_id as id, COUNT(*) as qtd
+         FROM leads l JOIN mapa m ON m.ad_id = l.ad_id
+         WHERE l.recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day') AND l.ad_id IS NOT NULL
+         GROUP BY m.grupo_id
        ),
        vendas AS (
-         SELECT ad_id, COUNT(*) FILTER (WHERE status = 'aprovada') as qtd_vendas,
-                COALESCE(SUM(valor) FILTER (WHERE status = 'aprovada'), 0) as faturamento,
-                COUNT(*) FILTER (WHERE status = 'agendamento') as qtd_agendamentos,
-                COALESCE(SUM(valor) FILTER (WHERE status = 'agendamento'), 0) as faturamento_agendado
-         FROM sales
-         WHERE ad_id IS NOT NULL AND recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')
-         GROUP BY ad_id
+         SELECT m.grupo_id as id,
+                COUNT(*) FILTER (WHERE sa.status = 'aprovada') as qtd_vendas,
+                COALESCE(SUM(sa.valor) FILTER (WHERE sa.status = 'aprovada'), 0) as faturamento,
+                COUNT(*) FILTER (WHERE sa.status = 'agendamento') as qtd_agendamentos,
+                COALESCE(SUM(sa.valor) FILTER (WHERE sa.status = 'agendamento'), 0) as faturamento_agendado,
+                COUNT(*) FILTER (WHERE sa.payload_bruto->'transaction'->>'payment_method' ILIKE '%boleto%'
+                                    OR sa.payload_bruto->>'payment_method' ILIKE '%boleto%') as boletos,
+                COUNT(*) FILTER (WHERE sa.payload_bruto->'transaction'->>'payment_method' ILIKE '%pix%'
+                                    OR sa.payload_bruto->>'payment_method' ILIKE '%pix%') as pix,
+                COUNT(*) FILTER (WHERE sa.status = 'recusada') as recusados
+         FROM sales sa JOIN mapa m ON m.ad_id = sa.ad_id
+         WHERE sa.ad_id IS NOT NULL AND sa.recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')
+         GROUP BY m.grupo_id
        )
        SELECT e.id, e.nome, e.status, e.orcamento_diario, e.lance, e.ad_account_id,
+              acc.nome as conta,
               COALESCE(g.gasto_total, 0) as gasto_total,
               COALESCE(g.impressoes, 0) as impressoes,
               COALESCE(g.cliques, 0) as cliques,
@@ -250,11 +267,15 @@ router.get('/campanhas', async (req, res) => {
               COALESCE(v.qtd_vendas, 0) as vendas,
               COALESCE(v.faturamento, 0) as faturamento,
               COALESCE(v.qtd_agendamentos, 0) as agendamentos,
-              COALESCE(v.faturamento_agendado, 0) as faturamento_agendado
+              COALESCE(v.faturamento_agendado, 0) as faturamento_agendado,
+              COALESCE(v.boletos, 0) as boletos,
+              COALESCE(v.pix, 0) as pix,
+              COALESCE(v.recusados, 0) as recusados
        FROM ${tabela} e
        LEFT JOIN gasto g ON g.id = e.id
-       LEFT JOIN leads_ l ON l.ad_id = e.id AND '${nivel}' = 'anuncios'
-       LEFT JOIN vendas v ON v.ad_id = e.id AND '${nivel}' = 'anuncios'
+       LEFT JOIN leads_ l ON l.id = e.id
+       LEFT JOIN vendas v ON v.id = e.id
+       LEFT JOIN ad_accounts acc ON acc.id = e.ad_account_id
        WHERE 1=1 ${whereExtra}
        ORDER BY gasto_total DESC NULLS LAST`,
       params
@@ -302,47 +323,69 @@ router.get('/criativos', async (req, res) => {
   const ordenarPor = ['vendas', 'roas', 'faturamento', 'lucro', 'investido', 'leads', 'cpa'].includes(req.query.ordenar)
     ? req.query.ordenar
     : 'vendas';
+  const busca = (req.query.busca || '').trim();
+  const contaId = req.query.conta_id && req.query.conta_id !== 'todas' ? parseInt(req.query.conta_id, 10) : null;
 
   try {
+    const params = [inicio, fim];
+    const condicoes = [];
+    if (busca) {
+      params.push(`%${busca}%`);
+      condicoes.push(`ma.nome ILIKE $${params.length}`);
+    }
+    if (contaId) {
+      params.push(contaId);
+      condicoes.push(`ma.ad_account_id = $${params.length}`);
+    }
+    const whereExtra = condicoes.length ? `AND ${condicoes.join(' AND ')}` : '';
+
+    // Usamos meta_ads como fonte da lista de criativos (nao so quem gastou no
+    // periodo) -- assim um criativo antigo que nao esta mais no ar, mas que
+    // gerou uma venda atribuida, continua aparecendo no ranking.
     const result = await pool.query(
       `WITH gasto AS (
-         SELECT ad_name as criativo, SUM(gasto) as investido, COUNT(DISTINCT ad_id) as qtd_anuncios,
-                MIN(ad_id) as exemplo_ad_id, MIN(ad_account_id) as exemplo_conta_id
-         FROM ad_spend_daily
-         WHERE data BETWEEN $1 AND $2 AND ad_name IS NOT NULL
-         GROUP BY ad_name
+         SELECT ma.nome as criativo,
+                COALESCE(SUM(asd.gasto), 0) as investido,
+                COUNT(DISTINCT ma.id) as qtd_anuncios,
+                COUNT(DISTINCT ma.id) FILTER (WHERE ma.status = 'ACTIVE') as qtd_ativos,
+                COUNT(DISTINCT ma.campaign_id) as qtd_campanhas,
+                COUNT(DISTINCT ma.ad_account_id) as qtd_contas,
+                (array_agg(ma.thumbnail_url) FILTER (WHERE ma.thumbnail_url IS NOT NULL))[1] as thumbnail_url,
+                (array_agg(ma.post_url) FILTER (WHERE ma.post_url IS NOT NULL))[1] as post_url
+         FROM meta_ads ma
+         LEFT JOIN ad_spend_daily asd ON asd.ad_id = ma.id AND asd.data BETWEEN $1 AND $2
+         WHERE ma.nome IS NOT NULL ${whereExtra}
+         GROUP BY ma.nome
        ),
        leads_ AS (
-         SELECT s.ad_name as criativo, COUNT(l.*) as qtd
-         FROM leads l
-         JOIN ad_spend_daily s ON s.ad_id = l.ad_id
+         SELECT ma.nome as criativo, COUNT(*) as qtd
+         FROM leads l JOIN meta_ads ma ON ma.id = l.ad_id
          WHERE l.recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')
-         GROUP BY s.ad_name
+         GROUP BY ma.nome
        ),
        vendas AS (
-         SELECT s2.ad_name as criativo,
-                COUNT(*) FILTER (WHERE sa.status = 'aprovada') as qtd_vendas,
-                COALESCE(SUM(sa.valor) FILTER (WHERE sa.status = 'aprovada'), 0) as faturamento
-         FROM sales sa
-         JOIN ad_spend_daily s2 ON s2.ad_id = sa.ad_id
-         WHERE sa.recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')
-         GROUP BY s2.ad_name
+         SELECT ma.nome as criativo,
+                COUNT(*) FILTER (WHERE s.status = 'aprovada') as qtd_vendas,
+                COALESCE(SUM(s.valor) FILTER (WHERE s.status = 'aprovada'), 0) as faturamento
+         FROM sales s JOIN meta_ads ma ON ma.id = s.ad_id
+         WHERE s.recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')
+         GROUP BY ma.nome
        )
-       SELECT g.criativo, g.investido, g.qtd_anuncios,
+       SELECT g.criativo, g.investido, g.qtd_anuncios, g.qtd_ativos, g.qtd_campanhas, g.qtd_contas,
+              g.thumbnail_url, g.post_url,
               COALESCE(l.qtd, 0) as leads,
               COALESCE(v.qtd_vendas, 0) as vendas,
               COALESCE(v.faturamento, 0) as faturamento,
               COALESCE(v.faturamento, 0) - g.investido as lucro,
               CASE WHEN g.investido > 0 THEN ROUND((COALESCE(v.faturamento,0) / g.investido)::numeric, 2) ELSE NULL END as roas,
               CASE WHEN COALESCE(v.qtd_vendas,0) > 0 THEN ROUND((g.investido / v.qtd_vendas)::numeric, 2) ELSE NULL END as cpa,
-              g.exemplo_ad_id, acc.ad_account_id as meta_account_id
+              CASE WHEN COALESCE(l.qtd,0) > 0 THEN ROUND((g.investido / l.qtd)::numeric, 2) ELSE NULL END as cpl
        FROM gasto g
        LEFT JOIN leads_ l ON l.criativo = g.criativo
        LEFT JOIN vendas v ON v.criativo = g.criativo
-       LEFT JOIN ad_accounts acc ON acc.id = g.exemplo_conta_id
-       ORDER BY ${ordenarPor === 'roas' ? 'roas' : ordenarPor} DESC NULLS LAST
+       ORDER BY ${ordenarPor === 'cpa' ? 'cpa ASC NULLS LAST' : ordenarPor + ' DESC NULLS LAST'}
        LIMIT 100`,
-      [inicio, fim]
+      params
     );
 
     res.json(result.rows);
@@ -357,13 +400,13 @@ router.get('/leads', async (req, res) => {
   const busca = req.query.busca || '';
   try {
     const result = await pool.query(
-      `SELECT l.*, s.campaign_name, s.adset_name, s.ad_name, acc.ad_account_id as meta_account_id
+      `SELECT l.*, s.campaign_name, s.adset_name, s.ad_name, ma.post_url, ma.thumbnail_url
        FROM leads l
        LEFT JOIN LATERAL (
-         SELECT campaign_name, adset_name, ad_name, ad_account_id FROM ad_spend_daily
+         SELECT campaign_name, adset_name, ad_name FROM ad_spend_daily
          WHERE ad_id = l.ad_id ORDER BY data DESC LIMIT 1
        ) s ON TRUE
-       LEFT JOIN ad_accounts acc ON acc.id = s.ad_account_id
+       LEFT JOIN meta_ads ma ON ma.id = l.ad_id
        WHERE ($1 = '' OR l.telefone LIKE '%' || $1 || '%')
        ORDER BY l.recebido_em DESC
        LIMIT 200`,
@@ -380,20 +423,31 @@ router.get('/leads', async (req, res) => {
 router.get('/vendas', async (req, res) => {
   const origem = req.query.origem && req.query.origem !== 'todas' ? req.query.origem : null;
   const status = req.query.status && req.query.status !== 'todos' ? req.query.status : null;
+  const busca = (req.query.busca || '').trim();
 
   try {
+    const params = [origem, status];
+    let condBusca = '';
+    if (busca) {
+      params.push(`%${busca}%`);
+      condBusca = `AND (sa.telefone ILIKE $${params.length} OR sa.email ILIKE $${params.length})`;
+    }
+
     const result = await pool.query(
-      `SELECT sa.*, s.campaign_name, s.adset_name, s.ad_name
+      `SELECT sa.*,
+              mc.nome as campaign_name, mas.nome as adset_name, ma.nome as ad_name, ma.post_url,
+              acc.nome as conta_nome, acc.ad_account_id as conta_meta_id
        FROM sales sa
-       LEFT JOIN LATERAL (
-         SELECT campaign_name, adset_name, ad_name FROM ad_spend_daily
-         WHERE ad_id = sa.ad_id ORDER BY data DESC LIMIT 1
-       ) s ON TRUE
+       LEFT JOIN meta_ads ma ON ma.id = sa.ad_id
+       LEFT JOIN meta_adsets mas ON mas.id = ma.adset_id
+       LEFT JOIN meta_campaigns mc ON mc.id = ma.campaign_id
+       LEFT JOIN ad_accounts acc ON acc.id = ma.ad_account_id
        WHERE ($1::text IS NULL OR sa.plataforma = $1)
          AND ($2::text IS NULL OR sa.status = $2)
+         ${condBusca}
        ORDER BY sa.recebido_em DESC
        LIMIT 200`,
-      [origem, status]
+      params
     );
     res.json(result.rows);
   } catch (err) {
@@ -402,13 +456,28 @@ router.get('/vendas', async (req, res) => {
   }
 });
 
+// Remove uma venda (usado principalmente pra apagar lancamentos manuais errados)
+router.delete('/vendas/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM sales WHERE id = $1', [req.params.id]);
+    res.json({ sucesso: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao remover venda' });
+  }
+});
+
 // Log de eventos enviados pro CAPI (aba "Eventos")
 router.get('/eventos', async (req, res) => {
   const tipo = req.query.tipo && req.query.tipo !== 'todos' ? req.query.tipo : null;
+  const { inicio, fim } = periodoOuPadrao(req);
   try {
     const result = await pool.query(
-      `SELECT * FROM eventos_capi WHERE ($1::text IS NULL OR evento = $1) ORDER BY enviado_em DESC LIMIT 200`,
-      [tipo]
+      `SELECT * FROM eventos_capi
+       WHERE ($1::text IS NULL OR evento = $1)
+         AND enviado_em BETWEEN $2 AND ($3::date + INTERVAL '1 day')
+       ORDER BY enviado_em DESC LIMIT 200`,
+      [tipo, inicio, fim]
     );
     res.json(result.rows);
   } catch (err) {
@@ -417,7 +486,99 @@ router.get('/eventos', async (req, res) => {
   }
 });
 
-// Serie diaria de gasto x faturamento, pro grafico "Evolucao no periodo"
+// Endpoint unico com TUDO que a Overview precisa, pra bater exatamente com a
+// plataforma original: Resultado, Funil, Gateway, Agendamentos, Trafego & Qualidade
+router.get('/overview', async (req, res) => {
+  const { inicio, fim } = periodoOuPadrao(req);
+
+  try {
+    const gasto = await pool.query(
+      `SELECT COALESCE(SUM(gasto), 0) as total,
+              COALESCE(SUM(gasto) FILTER (WHERE moeda_original = 'BRL'), 0) as total_brl,
+              COALESCE(SUM(impressoes), 0) as impressoes,
+              COALESCE(SUM(cliques), 0) as cliques
+       FROM ad_spend_daily WHERE data BETWEEN $1 AND $2`,
+      [inicio, fim]
+    );
+
+    const vendasPorPlataforma = await pool.query(
+      `SELECT plataforma, COALESCE(SUM(valor), 0) as total, COUNT(*) as qtd
+       FROM sales WHERE status = 'aprovada' AND recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')
+       GROUP BY plataforma`,
+      [inicio, fim]
+    );
+
+    const vendas = await pool.query(
+      `SELECT COUNT(*) as qtd, COALESCE(SUM(valor), 0) as total,
+              COUNT(*) FILTER (WHERE ad_id IS NOT NULL) as qtd_com_match
+       FROM sales WHERE status = 'aprovada' AND recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')`,
+      [inicio, fim]
+    );
+
+    const leads = await pool.query(
+      `SELECT COUNT(*) as qtd FROM leads WHERE recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')`,
+      [inicio, fim]
+    );
+
+    const agendamentos = await pool.query(
+      `SELECT COUNT(*) as qtd, COALESCE(SUM(valor), 0) as valor FROM sales
+       WHERE status = 'agendamento' AND recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')`,
+      [inicio, fim]
+    );
+
+    const gatewayResult = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE payload_bruto->'transaction'->>'payment_method' ILIKE '%boleto%'
+                             OR payload_bruto->>'payment_method' ILIKE '%boleto%') as boletos,
+         COUNT(*) FILTER (WHERE payload_bruto->'transaction'->>'payment_method' ILIKE '%pix%'
+                             OR payload_bruto->>'payment_method' ILIKE '%pix%') as pix,
+         COUNT(*) FILTER (WHERE status = 'recusada') as recusados
+       FROM sales WHERE recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')`,
+      [inicio, fim]
+    );
+
+    const gastoTotal = parseFloat(gasto.rows[0].total);
+    const gastoBrl = parseFloat(gasto.rows[0].total_brl);
+    const imposto = Math.round(gastoBrl * 0.125 * 100) / 100;
+    const investidoTotal = gastoTotal + imposto;
+    const cliques = parseInt(gasto.rows[0].cliques, 10);
+
+    const faturamentoTotal = vendasPorPlataforma.rows.reduce((soma, r) => soma + parseFloat(r.total), 0);
+    const qtdVendas = parseInt(vendas.rows[0].qtd, 10);
+    const qtdLeads = parseInt(leads.rows[0].qtd, 10);
+    const qtdComMatch = parseInt(vendas.rows[0].qtd_com_match, 10);
+
+    res.json({
+      periodo: { inicio, fim },
+      investido_total: investidoTotal,
+      gasto_total: gastoTotal,
+      imposto,
+      faturamento_total: faturamentoTotal,
+      faturamento_por_plataforma: vendasPorPlataforma.rows.map(r => ({
+        plataforma: r.plataforma, total: parseFloat(r.total), qtd: parseInt(r.qtd, 10),
+      })),
+      roas_geral: investidoTotal > 0 ? Math.round((faturamentoTotal / investidoTotal) * 100) / 100 : null,
+      lucro: faturamentoTotal - investidoTotal,
+      leads: qtdLeads,
+      cpl: qtdLeads > 0 ? Math.round((investidoTotal / qtdLeads) * 100) / 100 : null,
+      vendas: qtdVendas,
+      cpa: qtdVendas > 0 ? Math.round((investidoTotal / qtdVendas) * 100) / 100 : null,
+      boletos_gerados: parseInt(gatewayResult.rows[0].boletos, 10),
+      pix_gerados: parseInt(gatewayResult.rows[0].pix, 10),
+      cartoes_recusados: parseInt(gatewayResult.rows[0].recusados, 10),
+      agendamentos: parseInt(agendamentos.rows[0].qtd, 10),
+      faturamento_agendado: parseFloat(agendamentos.rows[0].valor),
+      cliques,
+      cpc: cliques > 0 ? Math.round((investidoTotal / cliques) * 100) / 100 : null,
+      match_rate: qtdVendas > 0 ? Math.round((qtdComMatch / qtdVendas) * 1000) / 10 : null,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao gerar overview' });
+  }
+});
+
+
 router.get('/serie-diaria', async (req, res) => {
   const { inicio, fim } = periodoOuPadrao(req);
   try {
@@ -433,7 +594,8 @@ router.get('/serie-diaria', async (req, res) => {
          WHERE status = 'aprovada' AND recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')
          GROUP BY recebido_em::date
        )
-       SELECT d.dia, COALESCE(g.total, 0) as gasto, COALESCE(v.total, 0) as faturamento
+       SELECT d.dia, COALESCE(g.total, 0) as gasto, COALESCE(v.total, 0) as faturamento,
+              CASE WHEN COALESCE(g.total,0) > 0 THEN ROUND((COALESCE(v.total,0) / g.total)::numeric, 2) ELSE NULL END as roas
        FROM dias d
        LEFT JOIN gasto g ON g.data = d.dia
        LEFT JOIN vendas v ON v.dia = d.dia

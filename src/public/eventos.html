@@ -13,23 +13,23 @@
 <script>
 document.getElementById('layout').innerHTML = montarSidebar() + `
   <div class="conteudo">
-    ${montarTopbar('Eventos', false)}
+    ${montarTopbar('Eventos')}
     <main>
-      <p style="color:#6b7280; margin-top:-6px; margin-bottom:16px;">
-        Log dos eventos enviados pro Meta via Conversions API (server-side), pra ajudar o algoritmo de anúncios a otimizar com base nas vendas reais.
-      </p>
       <div class="painel">
-        <div class="tabs-internas">
-          <button class="ativo" data-tipo="todos">Todos</button>
-          <button data-tipo="Lead">Lead</button>
-          <button data-tipo="Purchase">Purchase</button>
+        <div class="painel-titulo">
+          <span id="tituloEventos">Eventos</span>
+          <div class="tabs-internas" style="padding:0;">
+            <button class="ativo" data-tipo="todos">Todos</button>
+            <button data-tipo="Lead">Lead</button>
+            <button data-tipo="Purchase">Purchase</button>
+          </div>
         </div>
         <div class="tabela-scroll">
           <table>
             <thead>
-              <tr><th>Evento</th><th>Telefone</th><th>Pixel</th><th>Status</th><th>Enviado em</th></tr>
+              <tr><th>Evento</th><th>Telefone</th><th>Pixel</th><th>Status</th><th>Payload</th><th>Enviado em</th></tr>
             </thead>
-            <tbody id="corpo"><tr><td colspan="5">Carregando...</td></tr></tbody>
+            <tbody id="corpo"><tr><td colspan="6">Carregando...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -46,25 +46,35 @@ document.querySelectorAll('.tabs-internas button').forEach(btn => btn.addEventLi
 }));
 
 async function carregar() {
-  const eventos = await fetch(`/api/dashboard/eventos?tipo=${tipoAtual}`).then(r => r.json());
+  const inicio = document.getElementById('dataInicio').value;
+  const fim = document.getElementById('dataFim').value;
+  const eventos = await fetch(`/api/dashboard/eventos?data_inicio=${inicio}&data_fim=${fim}&tipo=${tipoAtual}`).then(r => r.json());
+
+  document.getElementById('tituloEventos').textContent = `Eventos (${eventos.length})`;
   const corpo = document.getElementById('corpo');
 
   if (eventos.length === 0) {
-    corpo.innerHTML = '<tr><td colspan="5">Nenhum evento enviado ainda.</td></tr>';
+    corpo.innerHTML = '<tr><td colspan="6">Nenhum evento enviado nesse período.</td></tr>';
     return;
   }
 
   corpo.innerHTML = eventos.map(e => `
     <tr>
       <td><span class="badge ${e.evento === 'Purchase' ? 'bom' : 'neutro'}">${e.evento.toUpperCase()}</span></td>
-      <td>${e.telefone ? '+' + e.telefone : '--'}</td>
-      <td style="font-family:monospace; font-size:11px;">${e.pixel_id || '--'}</td>
+      <td>${formatarTelefone(e.telefone)}</td>
+      <td style="font-family:monospace; font-size:11px; color:#6b7280;">${e.pixel_id || '--'}</td>
       <td><span class="badge ${e.status === 'ok' ? 'bom' : 'ruim'}">${e.status.toUpperCase()}</span></td>
+      <td style="color:#9aa0ac;">${e.status === 'ok' ? 'salvo' : (e.erro_mensagem || 'erro').slice(0, 40)}</td>
       <td>${formatarData(e.enviado_em)}</td>
     </tr>
   `).join('');
 }
 
+iniciarFiltrosDeData(carregar);
+window.sincronizarAgora = async () => {
+  await fetch('/api/dashboard/sincronizar-agora', { method: 'POST' });
+  carregar();
+};
 carregar();
 </script>
 </body>

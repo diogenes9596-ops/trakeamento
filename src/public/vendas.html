@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Vendas - Painel de Rastreamento</title>
 <link rel="stylesheet" href="/estilos.css">
+<style>
+  .link-meta { color: #7dc4ff; text-decoration: none; }
+  .link-meta:hover { text-decoration: underline; }
+  .conta-cel .id-conta { color: #6b7280; font-size: 10.5px; margin-top: 2px; }
+  .btn-excluir { background: transparent; border: none; color: #6b7280; cursor: pointer; font-size: 14px; padding: 4px; }
+  .btn-excluir:hover { color: #ff8b8b; }
+  .chip-origem { padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; background: #171a21; cursor: pointer; }
+  .chip-origem.ativo { outline: 2px solid currentColor; }
+</style>
 </head>
 <body>
 <div class="layout" id="layout"></div>
@@ -13,7 +22,7 @@
 <script>
 document.getElementById('layout').innerHTML = montarSidebar() + `
   <div class="conteudo">
-    ${montarTopbar('Vendas', false)}
+    ${montarTopbar('Vendas')}
     <main>
       <div class="cards">
         <div class="card"><div class="label">Vendas aprovadas</div><div class="valor" id="cVendas">--</div></div>
@@ -21,14 +30,14 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
         <div class="card"><div class="label">Ticket médio</div><div class="valor" id="cTicket">--</div></div>
       </div>
 
-      <div style="margin-bottom:10px; display:flex; gap:16px; flex-wrap:wrap;">
+      <div style="margin-bottom:10px; display:flex; gap:20px; flex-wrap:wrap;">
         <div>
           <div style="font-size:10px; color:#6b7280; text-transform:uppercase; margin-bottom:6px;">Origem</div>
           <div id="filtroOrigem" style="display:flex; gap:6px;">
-            <span class="chip ativo" data-origem="todas">Todas</span>
-            <span class="chip" data-origem="payt">Payt</span>
-            <span class="chip" data-origem="skale">Skale</span>
-            <span class="chip" data-origem="manual">Manual</span>
+            <span class="chip-origem ativo" style="color:#e5e7eb;" data-origem="todas">Todas</span>
+            <span class="chip-origem" style="color:#7dc4ff;" data-origem="payt">Payt</span>
+            <span class="chip-origem" style="color:#f0995e;" data-origem="skale">Skale</span>
+            <span class="chip-origem" style="color:#e5e7eb;" data-origem="manual">Manual</span>
           </div>
         </div>
         <div>
@@ -45,17 +54,20 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
       </div>
 
       <div class="painel">
-        <div class="painel-titulo"><span id="tituloVendas">Vendas</span></div>
+        <div class="painel-titulo">
+          <span id="tituloVendas">Vendas</span>
+          <input type="text" id="busca" placeholder="Buscar por telefone ou email..." style="background:#0b0d12; border:1px solid #23262f; color:#e5e7eb; padding:6px 10px; border-radius:7px; font-size:12px;">
+        </div>
         <div class="tabela-scroll">
           <table>
             <thead>
               <tr>
                 <th>Transaction ID</th><th>Telefone</th><th>Email</th><th>Produto</th>
-                <th>Valor</th><th>Status</th><th>Origem</th><th>Match</th>
-                <th>Campanha</th><th>Anúncio</th><th>Data</th>
+                <th>Valor</th><th>Status</th><th>Origem</th><th>Afiliado</th><th>Match</th>
+                <th>Conta</th><th>Campanha</th><th>Conjunto</th><th>Anúncio</th><th>Criativo</th><th>Data</th><th></th>
               </tr>
             </thead>
-            <tbody id="corpo"><tr><td colspan="11">Carregando...</td></tr></tbody>
+            <tbody id="corpo"><tr><td colspan="16">Carregando...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -65,8 +77,8 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
 
 let origemAtual = 'todas', statusAtual = 'todos';
 
-document.querySelectorAll('#filtroOrigem .chip').forEach(chip => chip.addEventListener('click', () => {
-  document.querySelectorAll('#filtroOrigem .chip').forEach(c => c.classList.remove('ativo'));
+document.querySelectorAll('#filtroOrigem .chip-origem').forEach(chip => chip.addEventListener('click', () => {
+  document.querySelectorAll('#filtroOrigem .chip-origem').forEach(c => c.classList.remove('ativo'));
   chip.classList.add('ativo');
   origemAtual = chip.dataset.origem;
   carregar();
@@ -79,10 +91,17 @@ document.querySelectorAll('#filtroStatus .chip').forEach(chip => chip.addEventLi
   carregar();
 }));
 
+let timeoutBusca;
+document.getElementById('busca').addEventListener('input', () => {
+  clearTimeout(timeoutBusca);
+  timeoutBusca = setTimeout(carregar, 350);
+});
+
 const badgeStatus = { aprovada: 'bom', recusada: 'ruim', reembolsada: 'ruim', aguardando: 'neutro', agendamento: 'alerta' };
 
 async function carregar() {
-  const vendas = await fetch(`/api/dashboard/vendas?origem=${origemAtual}&status=${statusAtual}`).then(r => r.json());
+  const busca = document.getElementById('busca').value;
+  const vendas = await fetch(`/api/dashboard/vendas?origem=${origemAtual}&status=${statusAtual}&busca=${encodeURIComponent(busca)}`).then(r => r.json());
 
   document.getElementById('tituloVendas').textContent = `Vendas (${vendas.length})`;
 
@@ -94,25 +113,41 @@ async function carregar() {
 
   const corpo = document.getElementById('corpo');
   if (vendas.length === 0) {
-    corpo.innerHTML = '<tr><td colspan="11">Nenhuma venda encontrada.</td></tr>';
+    corpo.innerHTML = '<tr><td colspan="16">Nenhuma venda encontrada.</td></tr>';
     return;
   }
 
-  corpo.innerHTML = vendas.map(v => `
+  corpo.innerHTML = vendas.map(v => {
+    const contaMeta = v.conta_meta_id ? v.conta_meta_id.replace('act_', '') : '';
+    const criativoCel = v.post_url
+      ? `<a href="${v.post_url}" target="_blank" rel="noopener" style="color:#4ade80; text-decoration:none;">Ver ↗</a>`
+      : '--';
+    return `
     <tr>
       <td style="font-family:monospace; font-size:11px;">${v.id_externo}</td>
-      <td>${v.telefone ? '+' + v.telefone : '--'}</td>
+      <td>${formatarTelefone(v.telefone)}</td>
       <td>${v.email || '--'}</td>
-      <td>${v.produto || '--'}</td>
+      <td>${v.produto ? v.produto.toUpperCase() : '--'}</td>
       <td>${formatarMoeda(v.valor)}</td>
       <td><span class="badge ${badgeStatus[v.status] || 'neutro'}">${v.status.toUpperCase()}</span></td>
       <td><span class="badge neutro">${v.plataforma.toUpperCase()}</span></td>
+      <td><span class="badge neutro">${v.afiliado_email || 'PRODUTOR'}</span></td>
       <td>${v.ad_id ? '<span class="badge bom">MATCH</span>' : '<span class="badge neutro">--</span>'}</td>
-      <td>${v.campaign_name || '--'}</td>
+      <td class="conta-cel">${v.conta_nome || '--'}${contaMeta ? `<div class="id-conta">${contaMeta}</div>` : ''}</td>
+      <td>${v.campaign_name ? `<span class="link-meta">${v.campaign_name}</span>` : '--'}</td>
+      <td>${v.adset_name || '--'}</td>
       <td>${v.ad_name || '--'}</td>
+      <td>${criativoCel}</td>
       <td>${formatarData(v.recebido_em)}</td>
-    </tr>
-  `).join('');
+      <td><button class="btn-excluir" onclick="excluirVenda(${v.id})" title="Excluir">🗑</button></td>
+    </tr>`;
+  }).join('');
+}
+
+async function excluirVenda(id) {
+  if (!confirm('Remover essa venda? Essa ação não pode ser desfeita.')) return;
+  await fetch(`/api/dashboard/vendas/${id}`, { method: 'DELETE' });
+  carregar();
 }
 
 carregar();
