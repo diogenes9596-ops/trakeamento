@@ -398,6 +398,7 @@ router.get('/criativos', async (req, res) => {
 // Lista de leads recebidos (aba "Leads")
 router.get('/leads', async (req, res) => {
   const busca = req.query.busca || '';
+  const { inicio, fim } = periodoOuPadrao(req);
   try {
     const result = await pool.query(
       `SELECT l.*, s.campaign_name, s.adset_name, s.ad_name, ma.post_url, ma.thumbnail_url
@@ -408,9 +409,10 @@ router.get('/leads', async (req, res) => {
        ) s ON TRUE
        LEFT JOIN meta_ads ma ON ma.id = l.ad_id
        WHERE ($1 = '' OR l.telefone LIKE '%' || $1 || '%')
+         AND l.recebido_em BETWEEN $2 AND ($3::date + INTERVAL '1 day')
        ORDER BY l.recebido_em DESC
        LIMIT 200`,
-      [busca.replace(/\D/g, '')]
+      [busca.replace(/\D/g, ''), inicio, fim]
     );
     res.json(result.rows);
   } catch (err) {
@@ -424,9 +426,10 @@ router.get('/vendas', async (req, res) => {
   const origem = req.query.origem && req.query.origem !== 'todas' ? req.query.origem : null;
   const status = req.query.status && req.query.status !== 'todos' ? req.query.status : null;
   const busca = (req.query.busca || '').trim();
+  const { inicio, fim } = periodoOuPadrao(req);
 
   try {
-    const params = [origem, status];
+    const params = [origem, status, inicio, fim];
     let condBusca = '';
     if (busca) {
       params.push(`%${busca}%`);
@@ -444,6 +447,7 @@ router.get('/vendas', async (req, res) => {
        LEFT JOIN ad_accounts acc ON acc.id = ma.ad_account_id
        WHERE ($1::text IS NULL OR sa.plataforma = $1)
          AND ($2::text IS NULL OR sa.status = $2)
+         AND sa.recebido_em BETWEEN $3 AND ($4::date + INTERVAL '1 day')
          ${condBusca}
        ORDER BY sa.recebido_em DESC
        LIMIT 200`,
