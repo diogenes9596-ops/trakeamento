@@ -15,6 +15,8 @@
     background: #171a21; padding: 40px; border-radius: 12px; width: 340px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.4);
   }
+  .logo { display: flex; justify-content: center; margin-bottom: 14px; }
+  .logo img { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; }
   h1 { font-size: 20px; margin: 0 0 24px; text-align: center; }
   input {
     width: 100%; padding: 12px; margin-bottom: 14px; border-radius: 8px;
@@ -30,7 +32,8 @@
 </head>
 <body>
   <div class="card">
-    <h1>🔒 Painel de Rastreamento</h1>
+    <div class="logo" id="logoArea"></div>
+    <h1 id="tituloLogin">🔒 Painel de Rastreamento</h1>
     <div class="erro" id="erro"></div>
     <input type="email" id="email" placeholder="Seu e-mail" autocomplete="username">
     <input type="password" id="senha" placeholder="Sua senha" autocomplete="current-password">
@@ -38,6 +41,14 @@
   </div>
 
 <script>
+fetch('/api/branding').then(r => r.json()).then((b) => {
+  if (b.logo_url) {
+    document.getElementById('logoArea').innerHTML = `<img src="${b.logo_url}" alt="">`;
+  }
+  document.getElementById('tituloLogin').textContent = b.nome || 'Painel de Rastreamento';
+  document.title = `Login - ${b.nome || 'Sistema de Rastreamento'}`;
+}).catch(() => {});
+
 async function entrar() {
   const email = document.getElementById('email').value;
   const senha = document.getElementById('senha').value;
