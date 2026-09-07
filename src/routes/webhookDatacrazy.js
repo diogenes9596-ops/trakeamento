@@ -29,6 +29,14 @@ function extrairCampos(body) {
   return campos;
 }
 
+// O DataCrazy (e outras integracoes) fazem um "ping" periodico via GET nesse
+// mesmo endereco pra verificar se o webhook esta no ar, antes de considerar
+// valido e comecar a mandar os eventos de verdade via POST. Sem responder 200
+// aqui, a integracao pode nunca chegar a mandar os leads reais.
+router.get('/datacrazy', (req, res) => {
+  res.sendStatus(200);
+});
+
 router.post('/datacrazy', async (req, res) => {
   const secretEsperado = await obterSecret('datacrazy');
   const secretRecebido = req.headers['x-datacrazy-secret'];
