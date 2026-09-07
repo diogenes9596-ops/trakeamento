@@ -9,6 +9,13 @@ const router = express.Router();
 // Status de pagamento que indicam que o dinheiro realmente entrou
 const STATUS_PAGO = ['payment_confirmed', 'payment_registered', 'order_paid_manual'];
 
+// Ping de verificacao (GET) que algumas integracoes mandam antes de comecar
+// a enviar os eventos de verdade via POST -- sem isso, a Skale pode considerar
+// o webhook invalido e nunca mandar as vendas de verdade.
+router.get('/skale', (req, res) => {
+  res.sendStatus(200);
+});
+
 router.post('/skale', async (req, res) => {
   const secretEsperado = await obterSecret('skale');
   const secretQuery = req.query.token;
