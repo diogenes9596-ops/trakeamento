@@ -260,6 +260,7 @@ router.get('/campanhas', async (req, res) => {
        )
        SELECT e.id, e.nome, e.status, e.orcamento_diario, e.lance, e.ad_account_id,
               acc.nome as conta,
+              ${nivel === 'anuncios' ? 'e.post_url, e.thumbnail_url,' : 'NULL as post_url, NULL as thumbnail_url,'}
               COALESCE(g.gasto_total, 0) as gasto_total,
               COALESCE(g.impressoes, 0) as impressoes,
               COALESCE(g.cliques, 0) as cliques,
