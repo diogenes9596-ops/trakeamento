@@ -9,6 +9,29 @@ const ITENS_MENU = [
   { href: '/configuracoes', label: 'Configurações', icone: '⚙️' },
 ];
 
+let __brandingCache = null;
+async function carregarBranding() {
+  if (__brandingCache) return __brandingCache;
+  try {
+    __brandingCache = await fetch('/api/branding').then(r => r.json());
+  } catch (e) {
+    __brandingCache = { nome: 'Sua Marca', tagline: 'TRACKING', logo_url: null };
+  }
+  return __brandingCache;
+}
+
+function aplicarBrandingNaSidebar() {
+  carregarBranding().then((b) => {
+    const logoEl = document.getElementById('marcaLogo');
+    const nomeEl = document.getElementById('marcaNome');
+    const taglineEl = document.getElementById('marcaTagline');
+    if (logoEl) logoEl.innerHTML = b.logo_url ? `<img src="${b.logo_url}" alt="">` : '';
+    if (nomeEl) nomeEl.textContent = b.nome || 'Sua Marca';
+    if (taglineEl) taglineEl.textContent = b.tagline || 'TRACKING';
+    document.title = document.title.replace(/ - .*$/, ' - ' + (b.nome || 'Sua Marca'));
+  });
+}
+
 function montarSidebar() {
   const caminhoAtual = window.location.pathname;
   const links = ITENS_MENU.map((item) => {
@@ -16,9 +39,17 @@ function montarSidebar() {
     return `<a href="${item.href}" class="${ativo}">${item.icone} ${item.label}</a>`;
   }).join('');
 
+  aplicarBrandingNaSidebar();
+
   return `
     <div class="sidebar">
-      <div class="marca">Sua Marca<small>TRACKING</small></div>
+      <div class="marca">
+        <span id="marcaLogo"></span>
+        <div>
+          <div id="marcaNome">Sua Marca</div>
+          <small id="marcaTagline">TRACKING</small>
+        </div>
+      </div>
       <nav>${links}</nav>
       <div class="rodape"><span class="ponto"></span> Sistema operacional</div>
     </div>
@@ -26,14 +57,15 @@ function montarSidebar() {
 }
 
 function montarTopbar(titulo, comFiltroData = true, comSeletorConta = true) {
+  setTimeout(aplicarTemaSalvo, 0);
   return `
     <div class="topbar">
       <div>
         <div class="eyebrow">Dashboard</div>
         <h1>${titulo}</h1>
       </div>
-      ${comFiltroData ? `
       <div class="filtros">
+        ${comFiltroData ? `
         ${comSeletorConta ? `
         <select id="contaSelect" style="background:#171a21; border:1px solid #23262f; color:#e5e7eb; padding:6px 10px; border-radius:7px; font-size:12px;">
           <option value="">Todas as contas</option>
@@ -46,10 +78,31 @@ function montarTopbar(titulo, comFiltroData = true, comSeletorConta = true) {
         <input type="date" id="dataFim">
         <button class="primary" onclick="window.aplicarFiltro && window.aplicarFiltro()">Aplicar</button>
         <button onclick="window.sincronizarAgora && window.sincronizarAgora()">🔄</button>
-      </div>` : ''}
+        ` : ''}
+        <button class="botao-tema" onclick="alternarTema()" title="Alternar tema claro/escuro" id="botaoTema">🌙</button>
+      </div>
     </div>
   `;
 }
+
+// Tema claro/escuro -- fica salvo no navegador (localStorage) pra lembrar da
+// escolha da pessoa entre uma visita e outra.
+function aplicarTemaSalvo() {
+  const salvo = localStorage.getItem('tema');
+  const claro = salvo === 'claro';
+  document.body.classList.toggle('claro', claro);
+  const botao = document.getElementById('botaoTema');
+  if (botao) botao.textContent = claro ? '☀️' : '🌙';
+}
+
+function alternarTema() {
+  const estaClaro = document.body.classList.toggle('claro');
+  localStorage.setItem('tema', estaClaro ? 'claro' : 'escuro');
+  const botao = document.getElementById('botaoTema');
+  if (botao) botao.textContent = estaClaro ? '☀️' : '🌙';
+}
+
+aplicarTemaSalvo();
 
 function formatarMoeda(v) {
   return (parseFloat(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
