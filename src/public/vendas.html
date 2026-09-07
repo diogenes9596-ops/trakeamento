@@ -101,7 +101,9 @@ const badgeStatus = { aprovada: 'bom', recusada: 'ruim', reembolsada: 'ruim', ag
 
 async function carregar() {
   const busca = document.getElementById('busca').value;
-  const vendas = await fetch(`/api/dashboard/vendas?origem=${origemAtual}&status=${statusAtual}&busca=${encodeURIComponent(busca)}`).then(r => r.json());
+  const inicio = document.getElementById('dataInicio').value;
+  const fim = document.getElementById('dataFim').value;
+  const vendas = await fetch(`/api/dashboard/vendas?origem=${origemAtual}&status=${statusAtual}&busca=${encodeURIComponent(busca)}&data_inicio=${inicio}&data_fim=${fim}`).then(r => r.json());
 
   document.getElementById('tituloVendas').textContent = `Vendas (${vendas.length})`;
 
@@ -150,6 +152,11 @@ async function excluirVenda(id) {
   carregar();
 }
 
+iniciarFiltrosDeData(carregar);
+window.sincronizarAgora = async () => {
+  await fetch('/api/dashboard/sincronizar-agora', { method: 'POST' });
+  carregar();
+};
 carregar();
 </script>
 </body>
