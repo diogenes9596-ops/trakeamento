@@ -16,6 +16,7 @@ const atendentesRoutes = require('./routes/atendentes');
 const pixelsRoutes = require('./routes/pixels');
 const fxRoutes = require('./routes/fx');
 const webhooksConfigRoutes = require('./routes/webhooksConfig');
+const eventosManuaisRoutes = require('./routes/eventosManuais');
 const webhookDatacrazy = require('./routes/webhookDatacrazy');
 const webhookSkale = require('./routes/webhookSkale');
 const webhookPayt = require('./routes/webhookPayt');
@@ -53,12 +54,13 @@ app.use('/api/atendentes', exigirLogin, atendentesRoutes);
 app.use('/api/pixels', exigirLogin, pixelsRoutes);
 app.use('/api/fx', exigirLogin, fxRoutes);
 app.use('/api/webhooks-config', exigirLogin, webhooksConfigRoutes);
+app.use('/api/eventos-manuais', exigirLogin, eventosManuaisRoutes);
 
 app.get('/', exigirLogin, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-const paginas = ['campanhas', 'criativos', 'leads', 'vendas', 'eventos', 'configuracoes'];
+const paginas = ['campanhas', 'criativos', 'leads', 'vendas', 'eventos', 'eventos-manuais', 'configuracoes'];
 for (const pagina of paginas) {
   app.get(`/${pagina}`, exigirLogin, (req, res) => {
     res.sendFile(path.join(__dirname, 'public', `${pagina}.html`));

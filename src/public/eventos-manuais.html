@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eventos Manuais - Painel de Rastreamento</title>
+<link rel="stylesheet" href="/estilos.css">
+</head>
+<body>
+<div class="layout" id="layout"></div>
+
+<script src="/comum.js"></script>
+<script>
+document.getElementById('layout').innerHTML = montarSidebar() + `
+  <div class="conteudo">
+    ${montarTopbar('Eventos', false)}
+    <main>
+      <div class="secao">
+        <p class="desc" style="text-transform:uppercase; letter-spacing:1px; font-size:11px;">Lançamento manual de vendas</p>
+      </div>
+
+      <div class="tabs-internas" style="padding:0 0 16px;">
+        <button class="ativo" data-aba="lancar">Lançar venda</button>
+        <button data-aba="produtos">Produtos</button>
+      </div>
+
+      <div id="conteudoAba"></div>
+    </main>
+  </div>
+`;
+
+document.querySelectorAll('.tabs-internas button').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.tabs-internas button').forEach(b => b.classList.remove('ativo'));
+  btn.classList.add('ativo');
+  renderizarAba(btn.dataset.aba);
+}));
+
+// ---------------- LANCAR VENDA ----------------
+async function abaLancar() {
+  const el = document.getElementById('conteudoAba');
+  const produtos = await fetch('/api/eventos-manuais/produtos').then(r => r.json());
+  const produtosAtivos = produtos.filter(p => p.ativo);
+
+  el.innerHTML = `
+    <div class="painel" style="padding:20px;">
+      <h2 style="margin-top:0;">Lançar venda manual</h2>
+      <div class="form-inline">
+        <div class="campo" style="flex:1;">
+          <label>Telefone</label>
+          <input id="fTelefone" placeholder="(11) 99999-9999">
+        </div>
+        <div class="campo" style="flex:1;">
+          <label>Email</label>
+          <input id="fEmail" placeholder="cliente@email.com">
+        </div>
+      </div>
+      <p class="desc">Pelo menos um dos dois (telefone ou email) é obrigatório. Digite o telefone com 11 dígitos (DDD + 9 + 8) — o DDI +55 é adicionado automaticamente. Se o telefone bater com um lead existente, a atribuição (campanha/conjunto/anúncio) é herdada.</p>
+
+      <div class="campo" style="margin-bottom:12px;">
+        <label>Nome completo</label>
+        <input id="fNome" placeholder="Maria Aparecida da Silva" style="min-width:100%;">
+      </div>
+
+      <div class="form-inline">
+        <div class="campo"><label>País</label><input id="fPais" value="BR" style="min-width:80px;"></div>
+        <div class="campo"><label>Estado</label><input id="fEstado" placeholder="SP" style="min-width:80px;"></div>
+        <div class="campo"><label>Cidade</label><input id="fCidade"></div>
+        <div class="campo"><label>CEP</label><input id="fCep"></div>
+      </div>
+
+      <div class="form-inline">
+        <div class="campo" style="flex:1;">
+          <label>Produto</label>
+          <select id="fProduto" style="min-width:100%;">
+            <option value="">— Selecione (opcional) —</option>
+            ${produtosAtivos.map(p => `<option value="${p.id}" data-valor="${p.valor || ''}">${p.nome}</option>`).join('')}
+          </select>
+        </div>
+        <div class="campo">
+          <label>Valor (R$)</label>
+          <input id="fValor" placeholder="0.00">
+        </div>
+      </div>
+
+      <div class="msg" id="msgLancar"></div>
+      <button class="primary" onclick="registrarVenda()">Registrar venda</button>
+    </div>
+  `;
+
+  document.getElementById('fProduto').addEventListener('change', (e) => {
+    const opt = e.target.selectedOptions[0];
+    const valor = opt?.dataset?.valor;
+    if (valor) document.getElementById('fValor').value = valor;
+  });
+}
+
+async function registrarVenda() {
+  const msg = document.getElementById('msgLancar');
+  msg.textContent = ''; msg.className = 'msg';
+
+  const body = {
+    telefone: document.getElementById('fTelefone').value,
+    email: document.getElementById('fEmail').value,
+    nome: document.getElementById('fNome').value,
+    pais: document.getElementById('fPais').value,
+    estado: document.getElementById('fEstado').value,
+    cidade: document.getElementById('fCidade').value,
+    cep: document.getElementById('fCep').value,
+    produto_id: document.getElementById('fProduto').value || null,
+    valor: document.getElementById('fValor').value,
+  };
+
+  const resp = await fetch('/api/eventos-manuais/lancar-venda', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+
+  if (resp.ok) {
+    msg.textContent = 'Venda registrada com sucesso!'; msg.className = 'msg ok';
+    ['fTelefone','fEmail','fNome','fCidade','fCep','fValor'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('fProduto').value = '';
+  } else {
+    msg.textContent = data.erro || 'Erro ao registrar'; msg.className = 'msg erro';
+  }
+}
+
+// ---------------- PRODUTOS ----------------
+async function abaProdutos() {
+  const el = document.getElementById('conteudoAba');
+  el.innerHTML = `
+    <div class="painel" style="padding:20px; margin-bottom:20px;">
+      <h2 style="margin-top:0;">Produtos</h2>
+      <div class="form-inline">
+        <div class="campo"><label>Product ID</label><input id="pId"></div>
+        <div class="campo" style="flex:1;"><label>Nome</label><input id="pNome" style="min-width:100%;"></div>
+        <div class="campo"><label>Valor (R$)</label><input id="pValor"></div>
+      </div>
+      <label style="display:flex; align-items:center; gap:6px; margin:10px 0; font-size:12.5px;">
+        <input type="checkbox" id="pAtivo" checked> Ativo (aparece no dropdown de lançamento)
+      </label>
+      <button class="primary" onclick="cadastrarProduto()">Cadastrar</button>
+      <div class="msg" id="msgProduto"></div>
+    </div>
+
+    <div class="painel">
+      <div class="tabela-scroll">
+        <table>
+          <thead><tr><th>Nome</th><th>Product ID</th><th>Valor</th><th>Status</th><th></th></tr></thead>
+          <tbody id="corpoProdutos"><tr><td colspan="5">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  carregarProdutos();
+}
+
+async function carregarProdutos() {
+  const produtos = await fetch('/api/eventos-manuais/produtos').then(r => r.json());
+  const corpo = document.getElementById('corpoProdutos');
+  if (produtos.length === 0) {
+    corpo.innerHTML = '<tr><td colspan="5">Nenhum produto cadastrado</td></tr>';
+    return;
+  }
+  corpo.innerHTML = produtos.map(p => `
+    <tr>
+      <td>${p.nome}</td>
+      <td style="font-family:monospace; font-size:11px;">${p.product_id || '--'}</td>
+      <td>${p.valor ? formatarMoeda(p.valor) : '--'}</td>
+      <td><span class="badge ${p.ativo ? 'bom' : 'neutro'}">${p.ativo ? 'ATIVO' : 'INATIVO'}</span></td>
+      <td><button class="danger" onclick="removerProduto(${p.id})">Remover</button></td>
+    </tr>
+  `).join('');
+}
+
+async function cadastrarProduto() {
+  const msg = document.getElementById('msgProduto');
+  const body = {
+    product_id: document.getElementById('pId').value,
+    nome: document.getElementById('pNome').value,
+    valor: document.getElementById('pValor').value,
+    ativo: document.getElementById('pAtivo').checked,
+  };
+  const resp = await fetch('/api/eventos-manuais/produtos', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (resp.ok) {
+    msg.textContent = 'Produto cadastrado!'; msg.className = 'msg ok';
+    ['pId','pNome','pValor'].forEach(id => document.getElementById(id).value = '');
+    carregarProdutos();
+  } else {
+    const data = await resp.json();
+    msg.textContent = data.erro; msg.className = 'msg erro';
+  }
+}
+
+async function removerProduto(id) {
+  await fetch(`/api/eventos-manuais/produtos/${id}`, { method: 'DELETE' });
+  carregarProdutos();
+}
+
+function renderizarAba(aba) {
+  const funcoes = { lancar: abaLancar, produtos: abaProdutos };
+  funcoes[aba]();
+}
+
+renderizarAba('lancar');
+</script>
+</body>
+</html>

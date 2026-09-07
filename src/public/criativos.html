@@ -68,9 +68,13 @@ async function carregar() {
   corpo.innerHTML = linhas.map((l, i) => {
     const roasBadge = l.roas === null ? '--' : `<span class="badge ${l.roas >= 2 ? 'bom' : 'ruim'}">${l.roas}x</span>`;
     const lucroClasse = l.lucro >= 0 ? 'verde' : 'vermelho';
+    const link = linkAdsManager(l.meta_account_id, l.exemplo_ad_id);
+    const nomeCel = link
+      ? `<a href="${link}" target="_blank" style="color:#e5e7eb; text-decoration:none;">${l.criativo} <span style="color:#4ade80;">↗</span></a>`
+      : l.criativo;
     return `<tr>
       <td>${i + 1}</td>
-      <td>${l.criativo}<div style="color:#6b7280; font-size:11px;">${l.qtd_anuncios} anúncio(s)</div></td>
+      <td>${nomeCel}<div style="color:#6b7280; font-size:11px;">${l.qtd_anuncios} anúncio(s)</div></td>
       <td>${formatarMoeda(l.investido)}</td>
       <td>${l.leads}</td>
       <td>${l.vendas}</td>

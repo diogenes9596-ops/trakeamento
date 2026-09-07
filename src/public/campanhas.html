@@ -5,6 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Campanhas - Painel de Rastreamento</title>
 <link rel="stylesheet" href="/estilos.css">
+<style>
+  .toggle { position: relative; width: 34px; height: 19px; display: inline-block; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .trilho {
+    position: absolute; cursor: pointer; inset: 0; background: #3a3f4b;
+    border-radius: 20px; transition: 0.15s;
+  }
+  .toggle .trilho:before {
+    content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 2.5px;
+    background: white; border-radius: 50%; transition: 0.15s;
+  }
+  .toggle input:checked + .trilho { background: #22c55e; }
+  .toggle input:checked + .trilho:before { transform: translateX(15px); }
+  .toggle input:disabled + .trilho { opacity: 0.5; cursor: default; }
+</style>
 </head>
 <body>
 <div class="layout" id="layout"></div>
@@ -15,27 +30,61 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
   <div class="conteudo">
     ${montarTopbar('Campanhas')}
     <main>
+      <div class="cards">
+        <div class="card">
+          <div class="label">Investido (total)</div>
+          <div class="valor" id="cInvestido">--</div>
+          <div class="sub" id="cInvestidoSub">Investido: -- · Imposto: --</div>
+        </div>
+        <div class="card"><div class="label">Faturamento</div><div class="valor verde" id="cFaturamento">--</div></div>
+        <div class="card"><div class="label">Lucro</div><div class="valor" id="cLucro">--</div></div>
+      </div>
+
+      <div class="cards">
+        <div class="card"><div class="label">Leads</div><div class="valor" id="cLeads">--</div></div>
+        <div class="card"><div class="label">Vendas</div><div class="valor" id="cVendas">--</div></div>
+        <div class="card"><div class="label">CPA médio</div><div class="valor" id="cCpa">--</div></div>
+      </div>
+
+      <div class="cards">
+        <div class="card"><div class="label">Boletos gerados</div><div class="valor" id="cBoletos">--</div></div>
+        <div class="card"><div class="label">Pix gerados</div><div class="valor" id="cPix">--</div></div>
+        <div class="card"><div class="label">Cartões recusados</div><div class="valor" id="cRecusados">--</div></div>
+      </div>
+
       <div class="painel">
         <div class="tabs-internas">
           <button class="ativo" data-nivel="campanhas">Campanhas</button>
           <button data-nivel="conjuntos">Conjuntos</button>
           <button data-nivel="anuncios">Anúncios</button>
         </div>
-        <div class="tabela-scroll">
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px 0; flex-wrap:wrap; gap:10px;">
+          <div style="display:flex; gap:6px;">
+            <span class="chip ativo" data-status="todas">Todas</span>
+            <span class="chip" data-status="ativas">Ativas</span>
+            <span class="chip" data-status="pausadas">Pausadas</span>
+          </div>
+          <input type="text" id="busca" placeholder="Filtrar por nome..." style="background:#0b0d12; border:1px solid #23262f; color:#e5e7eb; padding:6px 10px; border-radius:7px; font-size:12px;">
+        </div>
+        <div class="tabela-scroll" style="margin-top:12px;">
           <table>
             <thead>
               <tr>
+                <th></th>
                 <th id="colNome">Campanha</th>
+                <th>Orçamento</th>
                 <th>Gasto</th>
-                <th>Impressões</th>
-                <th>Cliques</th>
                 <th>Leads</th>
+                <th>CPL</th>
                 <th>Vendas</th>
+                <th>CPA</th>
                 <th>Faturamento</th>
-                <th>Agendamentos</th>
+                <th>Lucro</th>
+                <th>ROAS</th>
+                <th>Agendamento</th>
               </tr>
             </thead>
-            <tbody id="corpo"><tr><td colspan="8">Carregando...</td></tr></tbody>
+            <tbody id="corpo"><tr><td colspan="12">Carregando...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -44,6 +93,7 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
 `;
 
 let nivelAtual = 'campanhas';
+let statusAtual = 'todas';
 const nomesColuna = { campanhas: 'Campanha', conjuntos: 'Conjunto', anuncios: 'Anúncio' };
 
 document.querySelectorAll('.tabs-internas button').forEach((btn) => {
@@ -52,41 +102,126 @@ document.querySelectorAll('.tabs-internas button').forEach((btn) => {
     btn.classList.add('ativo');
     nivelAtual = btn.dataset.nivel;
     document.getElementById('colNome').textContent = nomesColuna[nivelAtual];
-    carregar();
+    carregarTabela();
   });
 });
 
-async function carregar() {
+document.querySelectorAll('.chip[data-status]').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.chip[data-status]').forEach(c => c.classList.remove('ativo'));
+    chip.classList.add('ativo');
+    statusAtual = chip.dataset.status;
+    carregarTabela();
+  });
+});
+
+let timeoutBusca;
+document.getElementById('busca').addEventListener('input', () => {
+  clearTimeout(timeoutBusca);
+  timeoutBusca = setTimeout(carregarTabela, 350);
+});
+
+async function carregarCards() {
   const inicio = document.getElementById('dataInicio').value;
   const fim = document.getElementById('dataFim').value;
-  const dados = await fetch(`/api/dashboard/campanhas?data_inicio=${inicio}&data_fim=${fim}&nivel=${nivelAtual}`).then(r => r.json());
+  const qs = `?data_inicio=${inicio}&data_fim=${fim}`;
+
+  const [totais, funil, gateway] = await Promise.all([
+    fetch('/api/dashboard/totais' + qs).then(r => r.json()),
+    fetch('/api/dashboard/funil' + qs).then(r => r.json()),
+    fetch('/api/dashboard/gateway' + qs).then(r => r.json()),
+  ]);
+
+  document.getElementById('cInvestido').textContent = formatarMoeda(totais.investido_total);
+  document.getElementById('cInvestidoSub').textContent = `Investido: ${formatarMoeda(totais.gasto_total)} · Imposto: ${formatarMoeda(totais.imposto)}`;
+  document.getElementById('cFaturamento').textContent = formatarMoeda(totais.faturamento_total);
+
+  const lucro = totais.faturamento_total - totais.investido_total;
+  const lucroEl = document.getElementById('cLucro');
+  lucroEl.textContent = formatarMoeda(lucro);
+  lucroEl.className = 'valor ' + (lucro >= 0 ? 'verde' : 'vermelho');
+
+  document.getElementById('cLeads').textContent = funil.leads;
+  document.getElementById('cVendas').textContent = funil.vendas;
+  document.getElementById('cCpa').textContent = funil.cpa !== null ? formatarMoeda(funil.cpa) : '--';
+
+  document.getElementById('cBoletos').textContent = gateway.boletos_gerados;
+  document.getElementById('cPix').textContent = gateway.pix_gerados;
+  document.getElementById('cRecusados').textContent = gateway.cartoes_recusados;
+}
+
+async function carregarTabela() {
+  const inicio = document.getElementById('dataInicio').value;
+  const fim = document.getElementById('dataFim').value;
+  const busca = document.getElementById('busca').value;
+  const dados = await fetch(`/api/dashboard/campanhas?data_inicio=${inicio}&data_fim=${fim}&nivel=${nivelAtual}&status=${statusAtual}&busca=${encodeURIComponent(busca)}`).then(r => r.json());
 
   const corpo = document.getElementById('corpo');
   if (!dados.linhas || dados.linhas.length === 0) {
-    corpo.innerHTML = '<tr><td colspan="8">Nenhum dado no período.</td></tr>';
+    corpo.innerHTML = '<tr><td colspan="12">Nenhum dado no período.</td></tr>';
     return;
   }
 
-  corpo.innerHTML = dados.linhas.map(l => `
-    <tr>
+  corpo.innerHTML = dados.linhas.map(l => {
+    const lucro = parseFloat(l.faturamento) - parseFloat(l.gasto_total);
+    const roas = l.gasto_total > 0 ? (l.faturamento / l.gasto_total) : null;
+    const cpl = l.leads > 0 ? (l.gasto_total / l.leads) : null;
+    const cpa = l.vendas > 0 ? (l.gasto_total / l.vendas) : null;
+    const ativo = l.status === 'ACTIVE';
+
+    return `<tr>
+      <td>
+        <label class="toggle">
+          <input type="checkbox" ${ativo ? 'checked' : ''} onchange="alternarStatus('${l.id}', this)">
+          <span class="trilho"></span>
+        </label>
+      </td>
       <td>${l.nome || l.id}</td>
+      <td>${l.orcamento_diario ? formatarMoeda(l.orcamento_diario) + '/dia' : '--'}</td>
       <td>${formatarMoeda(l.gasto_total)}</td>
-      <td>${l.impressoes || 0}</td>
-      <td>${l.cliques || 0}</td>
       <td>${l.leads || 0}</td>
+      <td>${cpl !== null ? formatarMoeda(cpl) : '--'}</td>
       <td>${l.vendas || 0}</td>
+      <td>${cpa !== null ? formatarMoeda(cpa) : '--'}</td>
       <td>${formatarMoeda(l.faturamento)}</td>
+      <td style="color:${lucro >= 0 ? '#4ade80' : '#ff8b8b'}">${formatarMoeda(lucro)}</td>
+      <td>${roas !== null ? `<span class="badge ${roas >= 2 ? 'bom' : 'ruim'}">${roas.toFixed(2)}x</span>` : '--'}</td>
       <td>${l.agendamentos || 0}</td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 }
 
-iniciarFiltrosDeData(carregar);
+async function alternarStatus(id, checkbox) {
+  checkbox.disabled = true;
+  const ativo = checkbox.checked;
+  try {
+    const resp = await fetch(`/api/dashboard/campanhas/${nivelAtual}/${id}/status`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ativo }),
+    });
+    if (!resp.ok) {
+      const data = await resp.json();
+      alert(data.erro || 'Erro ao atualizar status no Meta');
+      checkbox.checked = !ativo;
+    }
+  } catch (e) {
+    alert('Erro de conexão ao atualizar status');
+    checkbox.checked = !ativo;
+  } finally {
+    checkbox.disabled = false;
+  }
+}
+
+function carregarTudo() {
+  carregarCards();
+  carregarTabela();
+}
+
+iniciarFiltrosDeData(carregarTudo);
 window.sincronizarAgora = async () => {
   await fetch('/api/dashboard/sincronizar-agora', { method: 'POST' });
-  carregar();
+  carregarTudo();
 };
-carregar();
+carregarTudo();
 </script>
 </body>
 </html>

@@ -139,3 +139,47 @@ CREATE TABLE IF NOT EXISTS eventos_capi (
     erro_mensagem TEXT,
     enviado_em TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Estrutura de campanhas/conjuntos/anuncios espelhada do Meta (nome, status,
+-- orcamento) -- usada pra exibir e tambem pra poder pausar/ativar direto do painel
+CREATE TABLE IF NOT EXISTS meta_campaigns (
+    id VARCHAR(100) PRIMARY KEY,
+    ad_account_id INTEGER REFERENCES ad_accounts(id) ON DELETE CASCADE,
+    nome VARCHAR(500),
+    status VARCHAR(20), -- 'ACTIVE' | 'PAUSED' | outros
+    orcamento_diario NUMERIC(12,2),
+    orcamento_total NUMERIC(12,2),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS meta_adsets (
+    id VARCHAR(100) PRIMARY KEY,
+    campaign_id VARCHAR(100) REFERENCES meta_campaigns(id) ON DELETE CASCADE,
+    ad_account_id INTEGER REFERENCES ad_accounts(id) ON DELETE CASCADE,
+    nome VARCHAR(500),
+    status VARCHAR(20),
+    orcamento_diario NUMERIC(12,2),
+    lance NUMERIC(12,2),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS meta_ads (
+    id VARCHAR(100) PRIMARY KEY,
+    adset_id VARCHAR(100) REFERENCES meta_adsets(id) ON DELETE CASCADE,
+    campaign_id VARCHAR(100) REFERENCES meta_campaigns(id) ON DELETE CASCADE,
+    ad_account_id INTEGER REFERENCES ad_accounts(id) ON DELETE CASCADE,
+    nome VARCHAR(500),
+    status VARCHAR(20),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Produtos cadastrados manualmente (usados no dropdown de lancamento manual de venda)
+CREATE TABLE IF NOT EXISTS produtos_manuais (
+    id SERIAL PRIMARY KEY,
+    product_id VARCHAR(100),
+    nome VARCHAR(255) NOT NULL,
+    valor NUMERIC(12,2),
+    ativo BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+

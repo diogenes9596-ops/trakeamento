@@ -5,6 +5,7 @@ const ITENS_MENU = [
   { href: '/leads', label: 'Leads', icone: '👤' },
   { href: '/vendas', label: 'Vendas', icone: '🛒' },
   { href: '/eventos', label: 'Eventos', icone: '📡' },
+  { href: '/eventos-manuais', label: 'Eventos Manuais', icone: '➕' },
   { href: '/configuracoes', label: 'Configurações', icone: '⚙️' },
 ];
 
@@ -54,6 +55,13 @@ function formatarData(iso) {
   if (!iso) return '--';
   const d = new Date(iso);
   return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+// Monta o link direto pro anuncio dentro do Gerenciador de Anuncios do Meta
+function linkAdsManager(metaAccountId, adId) {
+  if (!metaAccountId || !adId) return null;
+  const contaNumero = metaAccountId.replace('act_', '');
+  return `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${contaNumero}&selected_ad_ids=${adId}`;
 }
 
 function iniciarFiltrosDeData(onAplicar) {
