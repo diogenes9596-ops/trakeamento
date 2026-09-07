@@ -60,6 +60,13 @@ async function afiliadoAutorizado(email) {
   return result.rows.length > 0;
 }
 
+// Ping de verificacao (GET) que algumas integracoes mandam antes de comecar
+// a enviar os eventos de verdade via POST -- sem isso, a Payt pode considerar
+// o webhook invalido e nunca mandar as vendas de verdade.
+router.get('/payt', (req, res) => {
+  res.sendStatus(200);
+});
+
 router.post('/payt', async (req, res) => {
   const secretEsperado = await obterSecret('payt');
   const secretRecebido = req.query.token;
