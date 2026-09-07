@@ -192,3 +192,16 @@ ALTER TABLE meta_ads ADD COLUMN IF NOT EXISTS lance NUMERIC(12,2);
 ALTER TABLE meta_ads ADD COLUMN IF NOT EXISTS thumbnail_url VARCHAR(1000);
 ALTER TABLE meta_ads ADD COLUMN IF NOT EXISTS post_url VARCHAR(500);
 
+-- Personalizacao de marca (logo + nome) que aparece na tela de login e na
+-- barra lateral do painel. Uma linha so (id=1), pensada pra sistema white-label.
+CREATE TABLE IF NOT EXISTS branding (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    nome VARCHAR(100) NOT NULL DEFAULT 'Sua Marca',
+    tagline VARCHAR(100) NOT NULL DEFAULT 'TRACKING',
+    logo_url TEXT,
+    atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT branding_single_row CHECK (id = 1)
+);
+INSERT INTO branding (id, nome, tagline) VALUES (1, 'Sua Marca', 'TRACKING')
+  ON CONFLICT (id) DO NOTHING;
+
