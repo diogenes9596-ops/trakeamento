@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eventos - Painel de Rastreamento</title>
+<link rel="stylesheet" href="/estilos.css">
+</head>
+<body>
+<div class="layout" id="layout"></div>
+
+<script src="/comum.js"></script>
+<script>
+document.getElementById('layout').innerHTML = montarSidebar() + `
+  <div class="conteudo">
+    ${montarTopbar('Eventos', false)}
+    <main>
+      <p style="color:#6b7280; margin-top:-6px; margin-bottom:16px;">
+        Log dos eventos enviados pro Meta via Conversions API (server-side), pra ajudar o algoritmo de anúncios a otimizar com base nas vendas reais.
+      </p>
+      <div class="painel">
+        <div class="tabs-internas">
+          <button class="ativo" data-tipo="todos">Todos</button>
+          <button data-tipo="Lead">Lead</button>
+          <button data-tipo="Purchase">Purchase</button>
+        </div>
+        <div class="tabela-scroll">
+          <table>
+            <thead>
+              <tr><th>Evento</th><th>Telefone</th><th>Pixel</th><th>Status</th><th>Enviado em</th></tr>
+            </thead>
+            <tbody id="corpo"><tr><td colspan="5">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+`;
+
+let tipoAtual = 'todos';
+document.querySelectorAll('.tabs-internas button').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.tabs-internas button').forEach(b => b.classList.remove('ativo'));
+  btn.classList.add('ativo');
+  tipoAtual = btn.dataset.tipo;
+  carregar();
+}));
+
+async function carregar() {
+  const eventos = await fetch(`/api/dashboard/eventos?tipo=${tipoAtual}`).then(r => r.json());
+  const corpo = document.getElementById('corpo');
+
+  if (eventos.length === 0) {
+    corpo.innerHTML = '<tr><td colspan="5">Nenhum evento enviado ainda.</td></tr>';
+    return;
+  }
+
+  corpo.innerHTML = eventos.map(e => `
+    <tr>
+      <td><span class="badge ${e.evento === 'Purchase' ? 'bom' : 'neutro'}">${e.evento.toUpperCase()}</span></td>
+      <td>${e.telefone ? '+' + e.telefone : '--'}</td>
+      <td style="font-family:monospace; font-size:11px;">${e.pixel_id || '--'}</td>
+      <td><span class="badge ${e.status === 'ok' ? 'bom' : 'ruim'}">${e.status.toUpperCase()}</span></td>
+      <td>${formatarData(e.enviado_em)}</td>
+    </tr>
+  `).join('');
+}
+
+carregar();
+</script>
+</body>
+</html>

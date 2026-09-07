@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Campanhas - Painel de Rastreamento</title>
+<link rel="stylesheet" href="/estilos.css">
+</head>
+<body>
+<div class="layout" id="layout"></div>
+
+<script src="/comum.js"></script>
+<script>
+document.getElementById('layout').innerHTML = montarSidebar() + `
+  <div class="conteudo">
+    ${montarTopbar('Campanhas')}
+    <main>
+      <div class="painel">
+        <div class="tabs-internas">
+          <button class="ativo" data-nivel="campanhas">Campanhas</button>
+          <button data-nivel="conjuntos">Conjuntos</button>
+          <button data-nivel="anuncios">Anúncios</button>
+        </div>
+        <div class="tabela-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th id="colNome">Campanha</th>
+                <th>Gasto</th>
+                <th>Impressões</th>
+                <th>Cliques</th>
+                <th>Leads</th>
+                <th>Vendas</th>
+                <th>Faturamento</th>
+                <th>Agendamentos</th>
+              </tr>
+            </thead>
+            <tbody id="corpo"><tr><td colspan="8">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+`;
+
+let nivelAtual = 'campanhas';
+const nomesColuna = { campanhas: 'Campanha', conjuntos: 'Conjunto', anuncios: 'Anúncio' };
+
+document.querySelectorAll('.tabs-internas button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs-internas button').forEach(b => b.classList.remove('ativo'));
+    btn.classList.add('ativo');
+    nivelAtual = btn.dataset.nivel;
+    document.getElementById('colNome').textContent = nomesColuna[nivelAtual];
+    carregar();
+  });
+});
+
+async function carregar() {
+  const inicio = document.getElementById('dataInicio').value;
+  const fim = document.getElementById('dataFim').value;
+  const dados = await fetch(`/api/dashboard/campanhas?data_inicio=${inicio}&data_fim=${fim}&nivel=${nivelAtual}`).then(r => r.json());
+
+  const corpo = document.getElementById('corpo');
+  if (!dados.linhas || dados.linhas.length === 0) {
+    corpo.innerHTML = '<tr><td colspan="8">Nenhum dado no período.</td></tr>';
+    return;
+  }
+
+  corpo.innerHTML = dados.linhas.map(l => `
+    <tr>
+      <td>${l.nome || l.id}</td>
+      <td>${formatarMoeda(l.gasto_total)}</td>
+      <td>${l.impressoes || 0}</td>
+      <td>${l.cliques || 0}</td>
+      <td>${l.leads || 0}</td>
+      <td>${l.vendas || 0}</td>
+      <td>${formatarMoeda(l.faturamento)}</td>
+      <td>${l.agendamentos || 0}</td>
+    </tr>
+  `).join('');
+}
+
+iniciarFiltrosDeData(carregar);
+window.sincronizarAgora = async () => {
+  await fetch('/api/dashboard/sincronizar-agora', { method: 'POST' });
+  carregar();
+};
+carregar();
+</script>
+</body>
+</html>

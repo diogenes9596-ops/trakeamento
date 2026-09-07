@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Configurações - Painel de Rastreamento</title>
+<link rel="stylesheet" href="/estilos.css">
+</head>
+<body>
+<div class="layout" id="layout"></div>
+
+<script src="/comum.js"></script>
+<script>
+document.getElementById('layout').innerHTML = montarSidebar() + `
+  <div class="conteudo">
+    ${montarTopbar('Configurações', false)}
+    <main>
+      <div class="tabs-internas" style="padding:0 0 16px;">
+        <button class="ativo" data-aba="contas">Contas de anúncio</button>
+        <button data-aba="atendentes">Atendentes</button>
+        <button data-aba="pixels">Pixels</button>
+        <button data-aba="cotacao">Cotação do dólar</button>
+        <button data-aba="webhooks">Webhooks</button>
+      </div>
+      <div id="conteudoAba"></div>
+    </main>
+  </div>
+`;
+
+document.querySelectorAll('.tabs-internas button').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('.tabs-internas button').forEach(b => b.classList.remove('ativo'));
+  btn.classList.add('ativo');
+  renderizarAba(btn.dataset.aba);
+}));
+
+// ---------------- CONTAS DE ANUNCIO ----------------
+async function abaContas() {
+  const el = document.getElementById('conteudoAba');
+  el.innerHTML = `
+    <div class="secao">
+      <div class="tabs-internas" style="padding:0 0 12px;">
+        <button class="ativo" id="modoImportar">Importar BM</button>
+        <button id="modoManual">Manual</button>
+      </div>
+
+      <div id="painelImportar">
+        <p class="desc">Cola o BM ID + Access Token + lista de Account IDs (separados por vírgula, quebra de linha ou espaço). O sistema resolve o nome de cada conta via Graph API e você confirma quais cadastrar.</p>
+        <div class="form-inline">
+          <div class="campo"><label>BM ID</label><input id="impBmId"></div>
+          <div class="campo"><label>Access Token</label><input id="impToken" style="min-width:320px;"></div>
+        </div>
+        <div class="campo" style="margin-bottom:10px;">
+          <label>Account IDs</label>
+          <textarea id="impIds" placeholder="1234567890123456, 9876543210987654, ..."></textarea>
+        </div>
+        <div class="msg" id="msgImportar"></div>
+        <button class="primary" onclick="buscarNomes()">Buscar nomes</button>
+
+        <div id="resultadoBusca" style="margin-top:16px;"></div>
+      </div>
+
+      <div id="painelManual" style="display:none;">
+        <div class="form-inline">
+          <div class="campo"><label>Nome</label><input id="manNome"></div>
+          <div class="campo"><label>BM ID</label><input id="manBmId"></div>
+          <div class="campo"><label>Account ID</label><input id="manAccountId" placeholder="sem prefixo act_"></div>
+          <div class="campo"><label>Access Token</label><input id="manToken" style="min-width:260px;"></div>
+          <button class="primary" onclick="salvarContaManual()">Adicionar</button>
+        </div>
+        <div class="msg" id="msgManual"></div>
+      </div>
+    </div>
+
+    <div class="painel">
+      <div class="painel-titulo">Contas cadastradas</div>
+      <div class="tabela-scroll">
+        <table>
+          <thead><tr><th>Nome</th><th>BM ID</th><th>Account ID</th><th>Moeda</th><th>Status</th><th></th></tr></thead>
+          <tbody id="corpoContas"><tr><td colspan="6">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('modoImportar').onclick = () => {
+    document.getElementById('modoImportar').classList.add('ativo');
+    document.getElementById('modoManual').classList.remove('ativo');
+    document.getElementById('painelImportar').style.display = 'block';
+    document.getElementById('painelManual').style.display = 'none';
+  };
+  document.getElementById('modoManual').onclick = () => {
+    document.getElementById('modoManual').classList.add('ativo');
+    document.getElementById('modoImportar').classList.remove('ativo');
+    document.getElementById('painelManual').style.display = 'block';
+    document.getElementById('painelImportar').style.display = 'none';
+  };
+
+  carregarContas();
+}
+
+async function carregarContas() {
+  const contas = await fetch('/api/ad-accounts').then(r => r.json());
+  const corpo = document.getElementById('corpoContas');
+  if (contas.length === 0) {
+    corpo.innerHTML = '<tr><td colspan="6">Nenhuma conta cadastrada ainda.</td></tr>';
+    return;
+  }
+  corpo.innerHTML = contas.map(c => `
+    <tr>
+      <td>${c.nome}</td>
+      <td style="font-family:monospace; font-size:11px;">${c.business_manager_id}</td>
+      <td style="font-family:monospace; font-size:11px;">${c.ad_account_id}</td>
+      <td><span class="badge neutro">${c.moeda}</span></td>
+      <td><span class="badge ${c.ativo ? 'bom' : 'neutro'}">${c.ativo ? 'ATIVO' : 'INATIVO'}</span></td>
+      <td><button class="danger" onclick="removerConta(${c.id})">Remover</button></td>
+    </tr>
+  `).join('');
+}
+
+let ultimoLoteBmId = '', ultimoLoteToken = '';
+
+async function buscarNomes() {
+  const msg = document.getElementById('msgImportar');
+  msg.textContent = ''; msg.className = 'msg';
+
+  ultimoLoteBmId = document.getElementById('impBmId').value;
+  ultimoLoteToken = document.getElementById('impToken').value;
+  const idsTexto = document.getElementById('impIds').value;
+
+  if (!ultimoLoteBmId || !ultimoLoteToken || !idsTexto) {
+    msg.textContent = 'Preencha BM ID, token e a lista de IDs';
+    msg.className = 'msg erro';
+    return;
+  }
+
+  const resp = await fetch('/api/ad-accounts/preview-lote', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ business_manager_id: ultimoLoteBmId, access_token: ultimoLoteToken, account_ids_texto: idsTexto }),
+  });
+  const data = await resp.json();
+
+  if (!resp.ok) { msg.textContent = data.erro; msg.className = 'msg erro'; return; }
+
+  const div = document.getElementById('resultadoBusca');
+  div.innerHTML = `
+    <table>
+      <thead><tr><th></th><th>Account ID</th><th>Nome</th><th>Moeda</th><th>Status</th></tr></thead>
+      <tbody>
+        ${data.contas.map((c, i) => `
+          <tr>
+            <td><input type="checkbox" class="check-conta" data-idx="${i}" ${c.ok ? 'checked' : 'disabled'}></td>
+            <td style="font-family:monospace; font-size:11px;">${c.ad_account_id}</td>
+            <td>${c.nome || '--'}</td>
+            <td>${c.moeda || '--'}</td>
+            <td>${c.ok ? '<span class="badge bom">OK</span>' : `<span class="badge ruim">${c.erro}</span>`}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <button class="primary" style="margin-top:12px;" onclick='confirmarImportacao(${JSON.stringify(data.contas).replace(/'/g, "&apos;")})'>Cadastrar selecionadas</button>
+  `;
+}
+
+async function confirmarImportacao(contas) {
+  const checks = document.querySelectorAll('.check-conta');
+  const selecionadas = [];
+  checks.forEach((chk, i) => { if (chk.checked) selecionadas.push(contas[i]); });
+
+  if (selecionadas.length === 0) return;
+
+  const resp = await fetch('/api/ad-accounts/importar-lote', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ business_manager_id: ultimoLoteBmId, access_token: ultimoLoteToken, contas: selecionadas }),
+  });
+
+  if (resp.ok) {
+    document.getElementById('resultadoBusca').innerHTML = '';
+    document.getElementById('impIds').value = '';
+    carregarContas();
+  }
+}
+
+async function salvarContaManual() {
+  const msg = document.getElementById('msgManual');
+  msg.textContent = ''; msg.className = 'msg';
+
+  const body = {
+    nome: document.getElementById('manNome').value,
+    business_manager_id: document.getElementById('manBmId').value,
+    ad_account_id: document.getElementById('manAccountId').value,
+    access_token: document.getElementById('manToken').value,
+  };
+
+  const resp = await fetch('/api/ad-accounts', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+
+  if (resp.ok) {
+    msg.textContent = 'Conta adicionada!'; msg.className = 'msg ok';
+    ['manNome', 'manBmId', 'manAccountId', 'manToken'].forEach(id => document.getElementById(id).value = '');
+    carregarContas();
+  } else {
+    msg.textContent = data.erro; msg.className = 'msg erro';
+  }
+}
+
+async function removerConta(id) {
+  if (!confirm('Remover essa conta?')) return;
+  await fetch(`/api/ad-accounts/${id}`, { method: 'DELETE' });
+  carregarContas();
+}
+
+// ---------------- ATENDENTES ----------------
+async function abaAtendentes() {
+  const el = document.getElementById('conteudoAba');
+  el.innerHTML = `
+    <div class="secao">
+      <h2>Atendentes</h2>
+      <p class="desc">Email dos afiliados cujas vendas Payt devem ser processadas. Compras de afiliados que NÃO estiverem aqui são ignoradas pelo webhook.</p>
+      <div class="form-inline">
+        <div class="campo"><label>Email</label><input id="atdEmail"></div>
+        <div class="campo"><label>Nome (opcional)</label><input id="atdNome"></div>
+        <button class="primary" onclick="cadastrarAtendente()">Cadastrar</button>
+      </div>
+      <div class="msg" id="msgAtendente"></div>
+    </div>
+    <div class="painel">
+      <div class="tabela-scroll">
+        <table>
+          <thead><tr><th>Email</th><th>Nome</th><th>Status</th><th></th></tr></thead>
+          <tbody id="corpoAtendentes"><tr><td colspan="4">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  carregarAtendentes();
+}
+
+async function carregarAtendentes() {
+  const lista = await fetch('/api/atendentes').then(r => r.json());
+  const corpo = document.getElementById('corpoAtendentes');
+  if (lista.length === 0) { corpo.innerHTML = '<tr><td colspan="4">Nenhum atendente cadastrado.</td></tr>'; return; }
+  corpo.innerHTML = lista.map(a => `
+    <tr>
+      <td>${a.email}</td><td>${a.nome || '--'}</td>
+      <td><span class="badge ${a.ativo ? 'bom' : 'neutro'}">${a.ativo ? 'ATIVO' : 'INATIVO'}</span></td>
+      <td><button class="danger" onclick="removerAtendente(${a.id})">Remover</button></td>
+    </tr>
+  `).join('');
+}
+
+async function cadastrarAtendente() {
+  const msg = document.getElementById('msgAtendente');
+  const email = document.getElementById('atdEmail').value;
+  const nome = document.getElementById('atdNome').value;
+  const resp = await fetch('/api/atendentes', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, nome }),
+  });
+  if (resp.ok) {
+    msg.textContent = 'Atendente cadastrado!'; msg.className = 'msg ok';
+    document.getElementById('atdEmail').value = ''; document.getElementById('atdNome').value = '';
+    carregarAtendentes();
+  } else {
+    const data = await resp.json();
+    msg.textContent = data.erro; msg.className = 'msg erro';
+  }
+}
+
+async function removerAtendente(id) {
+  await fetch(`/api/atendentes/${id}`, { method: 'DELETE' });
+  carregarAtendentes();
+}
+
+// ---------------- PIXELS ----------------
+async function abaPixels() {
+  const el = document.getElementById('conteudoAba');
+  el.innerHTML = `
+    <div class="secao">
+      <h2>Pixels</h2>
+      <p class="desc">Pixels do Meta usados pra reenviar eventos de Lead e Purchase via Conversions API (server-side), deduplicados com o pixel do navegador.</p>
+      <div class="form-inline">
+        <div class="campo"><label>Pixel ID</label><input id="pxId"></div>
+        <div class="campo"><label>Access Token</label><input id="pxToken" style="min-width:260px;"></div>
+        <div class="campo"><label>Nome</label><input id="pxNome"></div>
+      </div>
+      <label style="display:flex; align-items:center; gap:6px; margin:10px 0; font-size:12.5px;">
+        <input type="checkbox" id="pxDefault"> Definir como pixel default
+      </label>
+      <button class="primary" onclick="cadastrarPixel()">Cadastrar</button>
+      <div class="msg" id="msgPixel"></div>
+    </div>
+    <div class="painel">
+      <div class="tabela-scroll">
+        <table>
+          <thead><tr><th>Nome</th><th>Pixel ID</th><th>Envio (CAPI)</th><th>Default</th><th></th></tr></thead>
+          <tbody id="corpoPixels"><tr><td colspan="5">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  carregarPixels();
+}
+
+async function carregarPixels() {
+  const lista = await fetch('/api/pixels').then(r => r.json());
+  const corpo = document.getElementById('corpoPixels');
+  if (lista.length === 0) { corpo.innerHTML = '<tr><td colspan="5">Nenhum pixel cadastrado.</td></tr>'; return; }
+  corpo.innerHTML = lista.map(p => `
+    <tr>
+      <td>${p.nome}</td>
+      <td style="font-family:monospace; font-size:11px;">${p.pixel_id}</td>
+      <td>
+        <select onchange="mudarEventosCapi(${p.id}, this.value)">
+          <option value="venda" ${p.eventos_capi === 'venda' ? 'selected' : ''}>Venda</option>
+          <option value="venda_agendamento" ${p.eventos_capi === 'venda_agendamento' ? 'selected' : ''}>Venda + Agendamento</option>
+        </select>
+      </td>
+      <td>${p.is_default ? '<span class="badge bom">DEFAULT</span>' : `<button onclick="tornarDefault(${p.id})">Tornar default</button>`}</td>
+      <td><button class="danger" onclick="removerPixel(${p.id})">Remover</button></td>
+    </tr>
+  `).join('');
+}
+
+async function cadastrarPixel() {
+  const msg = document.getElementById('msgPixel');
+  const body = {
+    pixel_id: document.getElementById('pxId').value,
+    access_token: document.getElementById('pxToken').value,
+    nome: document.getElementById('pxNome').value,
+    is_default: document.getElementById('pxDefault').checked,
+  };
+  const resp = await fetch('/api/pixels', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (resp.ok) {
+    msg.textContent = 'Pixel cadastrado!'; msg.className = 'msg ok';
+    carregarPixels();
+  } else {
+    const data = await resp.json();
+    msg.textContent = data.erro; msg.className = 'msg erro';
+  }
+}
+
+async function mudarEventosCapi(id, valor) {
+  await fetch(`/api/pixels/${id}/eventos-capi`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventos_capi: valor }),
+  });
+}
+async function tornarDefault(id) {
+  await fetch(`/api/pixels/${id}/tornar-default`, { method: 'POST' });
+  carregarPixels();
+}
+async function removerPixel(id) {
+  await fetch(`/api/pixels/${id}`, { method: 'DELETE' });
+  carregarPixels();
+}
+
+// ---------------- COTACAO DO DOLAR ----------------
+async function abaCotacao() {
+  const el = document.getElementById('conteudoAba');
+  const dados = await fetch('/api/fx').then(r => r.json());
+
+  el.innerHTML = `
+    <div class="secao">
+      <h2>Cotação do dólar (USD → BRL)</h2>
+      <p class="desc">Converte o gasto das contas de anúncio em dólar pra BRL no dashboard. Cotação ao vivo de referência agora: <strong>${dados.cotacao_ao_vivo ? 'R$ ' + dados.cotacao_ao_vivo.toFixed(4) : '--'}</strong></p>
+
+      <div class="form-inline">
+        <div class="campo"><label>Data</label><input type="date" id="fxData"></div>
+        <div class="campo"><label>Cotação (R$ por US$ 1)</label><input id="fxValor" placeholder="Ex: 5.50"></div>
+        <button class="primary" onclick="salvarCotacaoDia()">Salvar dia</button>
+      </div>
+      <div class="msg" id="msgFxDia"></div>
+
+      <div class="painel" style="margin-bottom:20px;">
+        <div class="tabela-scroll">
+          <table>
+            <thead><tr><th>Data</th><th>Cotação</th></tr></thead>
+            <tbody>
+              ${dados.por_dia.length === 0 ? '<tr><td colspan="2">Nenhuma cotação diária — tudo usa o fallback global.</td></tr>' :
+                dados.por_dia.map(d => `<tr><td>${d.data.slice(0,10)}</td><td>R$ ${parseFloat(d.cotacao).toFixed(4)}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <h2>Fallback global</h2>
+      <p class="desc">Usado nos dias sem cotação específica acima.</p>
+      <label style="display:block; margin-bottom:8px;"><input type="radio" name="fxModo" value="automatico" ${dados.fallback.modo === 'automatico' ? 'checked' : ''}> Automático (cotação ao vivo)</label>
+      <label style="display:block; margin-bottom:12px;"><input type="radio" name="fxModo" value="manual" ${dados.fallback.modo === 'manual' ? 'checked' : ''}> Manual: <input id="fxManualValor" value="${dados.fallback.valor_manual || ''}" style="width:100px;"></label>
+      <button class="primary" onclick="salvarFallbackFx()">Salvar fallback</button>
+      <div class="msg" id="msgFxFallback"></div>
+    </div>
+  `;
+}
+
+async function salvarCotacaoDia() {
+  const msg = document.getElementById('msgFxDia');
+  const data = document.getElementById('fxData').value;
+  const cotacao = document.getElementById('fxValor').value;
+  const resp = await fetch('/api/fx/dia', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data, cotacao }),
+  });
+  if (resp.ok) { msg.textContent = 'Salvo!'; msg.className = 'msg ok'; abaCotacao(); }
+  else { msg.textContent = 'Erro ao salvar'; msg.className = 'msg erro'; }
+}
+
+async function salvarFallbackFx() {
+  const msg = document.getElementById('msgFxFallback');
+  const modo = document.querySelector('input[name=fxModo]:checked').value;
+  const valor_manual = document.getElementById('fxManualValor').value;
+  const resp = await fetch('/api/fx/fallback', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ modo, valor_manual }),
+  });
+  if (resp.ok) { msg.textContent = 'Salvo!'; msg.className = 'msg ok'; }
+  else { msg.textContent = 'Erro ao salvar'; msg.className = 'msg erro'; }
+}
+
+// ---------------- WEBHOOKS ----------------
+async function abaWebhooks() {
+  const el = document.getElementById('conteudoAba');
+  const cfg = await fetch('/api/webhooks-config').then(r => r.json());
+
+  el.innerHTML = `
+    <div class="secao">
+      <h2>Webhooks</h2>
+      <p class="desc">URLs, secrets e formato de payload dos webhooks do sistema. Copie a URL e o secret direto daqui pra configurar cada plataforma — dá pra trocar o secret sem mexer na hospedagem (a alteração vale na hora).</p>
+    </div>
+
+    ${blocoWebhook('Webhook de Leads (DataCrazy / WhatsApp)', 'datacrazy', cfg.datacrazy)}
+    ${blocoWebhook('Webhook de Vendas (Payt)', 'payt', cfg.payt)}
+    ${blocoWebhook('Webhook de Vendas (Skale Tracking — Pay After Delivery)', 'skale', cfg.skale)}
+  `;
+}
+
+function blocoWebhook(titulo, servico, dados) {
+  return `
+    <div class="secao">
+      <h2>${titulo} <span class="badge neutro">POST</span></h2>
+      <span class="mono">${dados.url}</span>
+      <p class="desc" style="margin-top:8px;">Autenticação: ${dados.autenticacao}</p>
+
+      <div class="linha-item">
+        <span>Secret atual: <strong style="font-family:monospace;">${dados.secret}</strong></span>
+        <button onclick="regenerarSecret('${servico}')">Gerar novo</button>
+      </div>
+
+      ${dados.payload_esperado ? `
+        <p class="desc" style="margin-top:12px;">Payload esperado:</p>
+        <pre class="mono" style="white-space:pre-wrap;">${JSON.stringify(dados.payload_esperado, null, 2)}</pre>
+      ` : ''}
+    </div>
+  `;
+}
+
+async function regenerarSecret(servico) {
+  if (!confirm('Gerar um novo secret? Você vai precisar atualizar isso na plataforma externa também.')) return;
+  await fetch(`/api/webhooks-config/${servico}/regenerar`, { method: 'POST' });
+  abaWebhooks();
+}
+
+// ---------------- ROTEAMENTO DE ABAS ----------------
+function renderizarAba(aba) {
+  const funcoes = { contas: abaContas, atendentes: abaAtendentes, pixels: abaPixels, cotacao: abaCotacao, webhooks: abaWebhooks };
+  funcoes[aba]();
+}
+
+renderizarAba('contas');
+</script>
+</body>
+</html>

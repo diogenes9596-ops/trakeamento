@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login - Sistema de Rastreamento</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    background: #0f1115; color: #e5e7eb;
+    display: flex; align-items: center; justify-content: center; height: 100vh;
+  }
+  .card {
+    background: #171a21; padding: 40px; border-radius: 12px; width: 340px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+  }
+  h1 { font-size: 20px; margin: 0 0 24px; text-align: center; }
+  input {
+    width: 100%; padding: 12px; margin-bottom: 14px; border-radius: 8px;
+    border: 1px solid #2a2f3a; background: #0f1115; color: #e5e7eb; font-size: 14px;
+  }
+  button {
+    width: 100%; padding: 12px; border-radius: 8px; border: none;
+    background: #4f7cff; color: white; font-weight: 600; cursor: pointer; font-size: 14px;
+  }
+  button:hover { background: #3d68e8; }
+  .erro { color: #ff6b6b; font-size: 13px; margin-bottom: 12px; min-height: 16px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>🔒 Painel de Rastreamento</h1>
+    <div class="erro" id="erro"></div>
+    <input type="email" id="email" placeholder="Seu e-mail" autocomplete="username">
+    <input type="password" id="senha" placeholder="Sua senha" autocomplete="current-password">
+    <button onclick="entrar()">Entrar</button>
+  </div>
+
+<script>
+async function entrar() {
+  const email = document.getElementById('email').value;
+  const senha = document.getElementById('senha').value;
+  const erroEl = document.getElementById('erro');
+  erroEl.textContent = '';
+
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, senha }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      window.location.href = '/';
+    } else {
+      erroEl.textContent = data.erro || 'Erro ao entrar';
+    }
+  } catch (e) {
+    erroEl.textContent = 'Erro de conexao';
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') entrar();
+});
+</script>
+</body>
+</html>

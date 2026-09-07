@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Criativos - Painel de Rastreamento</title>
+<link rel="stylesheet" href="/estilos.css">
+</head>
+<body>
+<div class="layout" id="layout"></div>
+
+<script src="/comum.js"></script>
+<script>
+document.getElementById('layout').innerHTML = montarSidebar() + `
+  <div class="conteudo">
+    ${montarTopbar('Criativos')}
+    <main>
+      <p style="color:#6b7280; margin-top:-6px; margin-bottom:16px;">
+        O mesmo criativo (anúncios de mesmo nome) somado numa linha. Ordene por vendas, ROAS, lucro pra decidir o que escalar e o que matar.
+      </p>
+      <div class="painel">
+        <div class="tabs-internas">
+          <button class="ativo" data-ordenar="vendas">Vendas</button>
+          <button data-ordenar="roas">ROAS</button>
+          <button data-ordenar="faturamento">Faturamento</button>
+          <button data-ordenar="lucro">Lucro</button>
+          <button data-ordenar="investido">Investido</button>
+          <button data-ordenar="leads">Leads</button>
+        </div>
+        <div class="tabela-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th><th>Criativo</th><th>Investido</th><th>Leads</th>
+                <th>Vendas</th><th>Faturamento</th><th>Lucro</th><th>ROAS</th><th>CPA</th>
+              </tr>
+            </thead>
+            <tbody id="corpo"><tr><td colspan="9">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+`;
+
+let ordenarAtual = 'vendas';
+
+document.querySelectorAll('.tabs-internas button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs-internas button').forEach(b => b.classList.remove('ativo'));
+    btn.classList.add('ativo');
+    ordenarAtual = btn.dataset.ordenar;
+    carregar();
+  });
+});
+
+async function carregar() {
+  const inicio = document.getElementById('dataInicio').value;
+  const fim = document.getElementById('dataFim').value;
+  const linhas = await fetch(`/api/dashboard/criativos?data_inicio=${inicio}&data_fim=${fim}&ordenar=${ordenarAtual}`).then(r => r.json());
+
+  const corpo = document.getElementById('corpo');
+  if (!linhas || linhas.length === 0) {
+    corpo.innerHTML = '<tr><td colspan="9">Nenhum dado no período.</td></tr>';
+    return;
+  }
+
+  corpo.innerHTML = linhas.map((l, i) => {
+    const roasBadge = l.roas === null ? '--' : `<span class="badge ${l.roas >= 2 ? 'bom' : 'ruim'}">${l.roas}x</span>`;
+    const lucroClasse = l.lucro >= 0 ? 'verde' : 'vermelho';
+    return `<tr>
+      <td>${i + 1}</td>
+      <td>${l.criativo}<div style="color:#6b7280; font-size:11px;">${l.qtd_anuncios} anúncio(s)</div></td>
+      <td>${formatarMoeda(l.investido)}</td>
+      <td>${l.leads}</td>
+      <td>${l.vendas}</td>
+      <td>${formatarMoeda(l.faturamento)}</td>
+      <td><span class="valor ${lucroClasse}" style="font-size:12.5px; font-weight:600;">${formatarMoeda(l.lucro)}</span></td>
+      <td>${roasBadge}</td>
+      <td>${l.cpa !== null ? formatarMoeda(l.cpa) : '--'}</td>
+    </tr>`;
+  }).join('');
+}
+
+iniciarFiltrosDeData(carregar);
+window.sincronizarAgora = async () => {
+  await fetch('/api/dashboard/sincronizar-agora', { method: 'POST' });
+  carregar();
+};
+carregar();
+</script>
+</body>
+</html>

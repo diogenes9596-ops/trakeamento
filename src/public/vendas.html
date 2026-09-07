@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vendas - Painel de Rastreamento</title>
+<link rel="stylesheet" href="/estilos.css">
+</head>
+<body>
+<div class="layout" id="layout"></div>
+
+<script src="/comum.js"></script>
+<script>
+document.getElementById('layout').innerHTML = montarSidebar() + `
+  <div class="conteudo">
+    ${montarTopbar('Vendas', false)}
+    <main>
+      <div class="cards">
+        <div class="card"><div class="label">Vendas aprovadas</div><div class="valor" id="cVendas">--</div></div>
+        <div class="card"><div class="label">Faturamento aprovado</div><div class="valor verde" id="cFaturamento">--</div></div>
+        <div class="card"><div class="label">Ticket médio</div><div class="valor" id="cTicket">--</div></div>
+      </div>
+
+      <div style="margin-bottom:10px; display:flex; gap:16px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:10px; color:#6b7280; text-transform:uppercase; margin-bottom:6px;">Origem</div>
+          <div id="filtroOrigem" style="display:flex; gap:6px;">
+            <span class="chip ativo" data-origem="todas">Todas</span>
+            <span class="chip" data-origem="payt">Payt</span>
+            <span class="chip" data-origem="skale">Skale</span>
+            <span class="chip" data-origem="manual">Manual</span>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:10px; color:#6b7280; text-transform:uppercase; margin-bottom:6px;">Status</div>
+          <div id="filtroStatus" style="display:flex; gap:6px; flex-wrap:wrap;">
+            <span class="chip ativo" data-status="todos">Todos</span>
+            <span class="chip" data-status="aprovada">Aprovada</span>
+            <span class="chip" data-status="aguardando">Pendente</span>
+            <span class="chip" data-status="reembolsada">Reembolsada</span>
+            <span class="chip" data-status="recusada">Recusada</span>
+            <span class="chip" data-status="agendamento">Agendamento</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="painel">
+        <div class="painel-titulo"><span id="tituloVendas">Vendas</span></div>
+        <div class="tabela-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Transaction ID</th><th>Telefone</th><th>Email</th><th>Produto</th>
+                <th>Valor</th><th>Status</th><th>Origem</th><th>Match</th>
+                <th>Campanha</th><th>Anúncio</th><th>Data</th>
+              </tr>
+            </thead>
+            <tbody id="corpo"><tr><td colspan="11">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+`;
+
+let origemAtual = 'todas', statusAtual = 'todos';
+
+document.querySelectorAll('#filtroOrigem .chip').forEach(chip => chip.addEventListener('click', () => {
+  document.querySelectorAll('#filtroOrigem .chip').forEach(c => c.classList.remove('ativo'));
+  chip.classList.add('ativo');
+  origemAtual = chip.dataset.origem;
+  carregar();
+}));
+
+document.querySelectorAll('#filtroStatus .chip').forEach(chip => chip.addEventListener('click', () => {
+  document.querySelectorAll('#filtroStatus .chip').forEach(c => c.classList.remove('ativo'));
+  chip.classList.add('ativo');
+  statusAtual = chip.dataset.status;
+  carregar();
+}));
+
+const badgeStatus = { aprovada: 'bom', recusada: 'ruim', reembolsada: 'ruim', aguardando: 'neutro', agendamento: 'alerta' };
+
+async function carregar() {
+  const vendas = await fetch(`/api/dashboard/vendas?origem=${origemAtual}&status=${statusAtual}`).then(r => r.json());
+
+  document.getElementById('tituloVendas').textContent = `Vendas (${vendas.length})`;
+
+  const aprovadas = vendas.filter(v => v.status === 'aprovada');
+  const faturamento = aprovadas.reduce((soma, v) => soma + parseFloat(v.valor), 0);
+  document.getElementById('cVendas').textContent = aprovadas.length;
+  document.getElementById('cFaturamento').textContent = formatarMoeda(faturamento);
+  document.getElementById('cTicket').textContent = aprovadas.length > 0 ? formatarMoeda(faturamento / aprovadas.length) : '--';
+
+  const corpo = document.getElementById('corpo');
+  if (vendas.length === 0) {
+    corpo.innerHTML = '<tr><td colspan="11">Nenhuma venda encontrada.</td></tr>';
+    return;
+  }
+
+  corpo.innerHTML = vendas.map(v => `
+    <tr>
+      <td style="font-family:monospace; font-size:11px;">${v.id_externo}</td>
+      <td>${v.telefone ? '+' + v.telefone : '--'}</td>
+      <td>${v.email || '--'}</td>
+      <td>${v.produto || '--'}</td>
+      <td>${formatarMoeda(v.valor)}</td>
+      <td><span class="badge ${badgeStatus[v.status] || 'neutro'}">${v.status.toUpperCase()}</span></td>
+      <td><span class="badge neutro">${v.plataforma.toUpperCase()}</span></td>
+      <td>${v.ad_id ? '<span class="badge bom">MATCH</span>' : '<span class="badge neutro">--</span>'}</td>
+      <td>${v.campaign_name || '--'}</td>
+      <td>${v.ad_name || '--'}</td>
+      <td>${formatarData(v.recebido_em)}</td>
+    </tr>
+  `).join('');
+}
+
+carregar();
+</script>
+</body>
+</html>

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Leads - Painel de Rastreamento</title>
+<link rel="stylesheet" href="/estilos.css">
+</head>
+<body>
+<div class="layout" id="layout"></div>
+
+<script src="/comum.js"></script>
+<script>
+document.getElementById('layout').innerHTML = montarSidebar() + `
+  <div class="conteudo">
+    ${montarTopbar('Leads', false)}
+    <main>
+      <div class="painel">
+        <div class="painel-titulo">
+          <span id="tituloLeads">Leads</span>
+          <input type="text" id="busca" placeholder="Buscar por telefone..." style="background:#0b0d12; border:1px solid #23262f; color:#e5e7eb; padding:6px 10px; border-radius:7px; font-size:12px;">
+        </div>
+        <div class="tabela-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Telefone</th><th>Campanha</th><th>Conjunto</th><th>Anúncio</th>
+                <th>CTWA Click ID</th><th>Recebido em</th>
+              </tr>
+            </thead>
+            <tbody id="corpo"><tr><td colspan="6">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+`;
+
+function mascararTelefone(tel) {
+  if (!tel || tel.length < 6) return tel;
+  return tel.slice(0, -4) + '••••';
+}
+
+async function carregar() {
+  const busca = document.getElementById('busca').value;
+  const leads = await fetch(`/api/dashboard/leads?busca=${encodeURIComponent(busca)}`).then(r => r.json());
+
+  document.getElementById('tituloLeads').textContent = `Leads (${leads.length})`;
+  const corpo = document.getElementById('corpo');
+
+  if (leads.length === 0) {
+    corpo.innerHTML = '<tr><td colspan="6">Nenhum lead encontrado.</td></tr>';
+    return;
+  }
+
+  corpo.innerHTML = leads.map(l => `
+    <tr>
+      <td>+${l.telefone}</td>
+      <td>${l.campaign_name || '--'}</td>
+      <td>${l.adset_name || '--'}</td>
+      <td>${l.ad_name || '--'}</td>
+      <td style="font-family:monospace; font-size:11px;">${l.ctwa_clid ? l.ctwa_clid.slice(0, 14) + '…' : '--'}</td>
+      <td>${formatarData(l.recebido_em)}</td>
+    </tr>
+  `).join('');
+}
+
+let timeoutBusca;
+document.getElementById('busca').addEventListener('input', () => {
+  clearTimeout(timeoutBusca);
+  timeoutBusca = setTimeout(carregar, 300);
+});
+
+carregar();
+</script>
+</body>
+</html>
