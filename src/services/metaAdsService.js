@@ -136,7 +136,7 @@ async function sincronizarTodasContas(diasParaTras = 30) {
     try {
       const registros = await buscarGastoPorAnuncio(conta.ad_account_id, conta.access_token, dataInicio, dataFim);
       await salvarGastoDiario(conta.id, conta.moeda, registros);
-      await sincronizarEstrutura(conta.id, conta.ad_account_id, conta.access_token);
+      await sincronizarEstrutura(conta.id, conta.ad_account_id, conta.access_token, conta.moeda);
       relatorio.push({ conta: conta.nome, registros: registros.length, ok: true });
     } catch (err) {
       const mensagem = err.response?.data?.error?.message || err.message;
@@ -152,7 +152,15 @@ async function sincronizarTodasContas(diasParaTras = 30) {
 // de uma conta. Isso e diferente do endpoint de insights (gasto) -- aqui a
 // gente pega o "status" atual pra poder mostrar Ativa/Pausada e permitir
 // pausar/ativar direto do painel.
-async function sincronizarEstrutura(adAccountDbId, adAccountId, accessToken) {
+async function sincronizarEstrutura(adAccountDbId, adAccountId, accessToken, moedaOriginal) {
+  // Orcamento/lance tambem vem na moeda original da conta (igual o gasto) --
+  // sem converter, uma conta em USD mostrava o numero em dolar formatado
+  // como se fosse real. Usa a cotacao de hoje, ja que orcamento e um valor
+  // "atual" (nao historico por dia, como o gasto).
+  const cotacao = moedaOriginal && moedaOriginal !== 'BRL'
+    ? await obterCotacaoParaData(new Date().toISOString().slice(0, 10))
+    : 1;
+
   const camposCampanha = 'id,name,status,daily_budget,lifetime_budget';
   const camposAdset = 'id,name,status,campaign_id,daily_budget,bid_amount';
   const camposAd = 'id,name,status,adset_id,campaign_id,creative{effective_object_story_id,thumbnail_url}';
@@ -169,7 +177,7 @@ async function sincronizarEstrutura(adAccountDbId, adAccountId, accessToken) {
        VALUES ($1,$2,$3,$4,$5,$6,NOW())
        ON CONFLICT (id) DO UPDATE SET nome=EXCLUDED.nome, status=EXCLUDED.status,
          orcamento_diario=EXCLUDED.orcamento_diario, orcamento_total=EXCLUDED.orcamento_total, atualizado_em=NOW()`,
-      [c.id, adAccountDbId, c.name, c.status, centavosParaReais(c.daily_budget), centavosParaReais(c.lifetime_budget)]
+      [c.id, adAccountDbId, c.name, c.status, centavosParaReais(c.daily_budget, cotacao), centavosParaReais(c.lifetime_budget, cotacao)]
     );
   }
 
@@ -179,7 +187,7 @@ async function sincronizarEstrutura(adAccountDbId, adAccountId, accessToken) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
        ON CONFLICT (id) DO UPDATE SET nome=EXCLUDED.nome, status=EXCLUDED.status,
          orcamento_diario=EXCLUDED.orcamento_diario, lance=EXCLUDED.lance, atualizado_em=NOW()`,
-      [a.id, a.campaign_id, adAccountDbId, a.name, a.status, centavosParaReais(a.daily_budget), centavosParaReais(a.bid_amount)]
+      [a.id, a.campaign_id, adAccountDbId, a.name, a.status, centavosParaReais(a.daily_budget, cotacao), centavosParaReais(a.bid_amount, cotacao)]
     );
   }
 
@@ -202,10 +210,10 @@ async function sincronizarEstrutura(adAccountDbId, adAccountId, accessToken) {
   return { campanhas: campanhas.length, adsets: adsets.length, ads: ads.length };
 }
 
-function centavosParaReais(valor) {
+function centavosParaReais(valor, cotacao = 1) {
   // A Graph API devolve orcamento em centavos da moeda da conta
   if (valor === undefined || valor === null) return null;
-  return parseFloat(valor) / 100;
+  return (parseFloat(valor) / 100) * cotacao;
 }
 
 async function buscarTodasPaginas(url, params) {
