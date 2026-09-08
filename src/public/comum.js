@@ -155,12 +155,23 @@ async function carregarContasNoSeletor() {
 
 window.contaFiltro = '';
 
+// Formata uma data no fuso horario LOCAL do navegador (evita o bug classico
+// do toISOString(), que converte pra UTC e "pula" pro dia seguinte a noite,
+// ja que o Brasil esta 3h atras do UTC).
+function formatarDataLocal(d) {
+  const ano = d.getFullYear();
+  const mes = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${ano}-${mes}-${dia}`;
+}
+
 function iniciarFiltrosDeData(onAplicar) {
   const hoje = new Date();
   const setPeriodo = (dias) => {
-    const inicio = new Date(Date.now() - dias * 86400000);
-    document.getElementById('dataInicio').value = inicio.toISOString().slice(0, 10);
-    document.getElementById('dataFim').value = hoje.toISOString().slice(0, 10);
+    const inicio = new Date();
+    inicio.setDate(inicio.getDate() - dias);
+    document.getElementById('dataInicio').value = formatarDataLocal(inicio);
+    document.getElementById('dataFim').value = formatarDataLocal(hoje);
   };
   setPeriodo(0);
 
@@ -171,9 +182,10 @@ function iniciarFiltrosDeData(onAplicar) {
       const periodo = chip.dataset.periodo;
       if (periodo === 'hoje') setPeriodo(0);
       else if (periodo === 'ontem') {
-        const ontem = new Date(Date.now() - 86400000);
-        document.getElementById('dataInicio').value = ontem.toISOString().slice(0, 10);
-        document.getElementById('dataFim').value = ontem.toISOString().slice(0, 10);
+        const ontem = new Date();
+        ontem.setDate(ontem.getDate() - 1);
+        document.getElementById('dataInicio').value = formatarDataLocal(ontem);
+        document.getElementById('dataFim').value = formatarDataLocal(ontem);
       } else if (periodo === '7d') setPeriodo(7);
       else if (periodo === '30d') setPeriodo(30);
       onAplicar();
