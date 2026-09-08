@@ -23,6 +23,7 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
         <button data-aba="cotacao">Cotação do dólar</button>
         <button data-aba="webhooks">Webhooks</button>
         <button data-aba="marca">Marca</button>
+        <button data-aba="conta">Conta</button>
       </div>
       <div id="conteudoAba"></div>
     </main>
@@ -538,6 +539,74 @@ async function salvarMarca() {
   }
 }
 
+// ---------------- CONTA (trocar senha) ----------------
+async function abaConta() {
+  const el = document.getElementById('conteudoAba');
+  const meResp = await fetch('/api/auth/me').then(r => r.json());
+
+  el.innerHTML = `
+    <div class="secao">
+      <h2>Sua conta</h2>
+      <p class="desc">Logado como <strong>${meResp.email || ''}</strong>. Troque sua senha sempre que quiser aqui, sem precisar pedir ajuda.</p>
+    </div>
+
+    <div class="painel" style="padding:20px; max-width:400px;">
+      <div class="campo" style="margin-bottom:12px;">
+        <label>Senha atual</label>
+        <input type="password" id="senhaAtualInput" style="min-width:100%;">
+      </div>
+      <div class="campo" style="margin-bottom:12px;">
+        <label>Nova senha</label>
+        <input type="password" id="senhaNovaInput" placeholder="No mínimo 6 caracteres" style="min-width:100%;">
+      </div>
+      <div class="campo" style="margin-bottom:12px;">
+        <label>Confirmar nova senha</label>
+        <input type="password" id="senhaNovaConfirmInput" style="min-width:100%;">
+      </div>
+      <div class="msg" id="msgSenha"></div>
+      <button class="primary" onclick="salvarNovaSenha()">Salvar nova senha</button>
+    </div>
+  `;
+}
+
+async function salvarNovaSenha() {
+  const senha_atual = document.getElementById('senhaAtualInput').value;
+  const senha_nova = document.getElementById('senhaNovaInput').value;
+  const confirmacao = document.getElementById('senhaNovaConfirmInput').value;
+  const msgEl = document.getElementById('msgSenha');
+  msgEl.innerHTML = '';
+
+  if (!senha_atual || !senha_nova) {
+    msgEl.innerHTML = '<span class="erro">Preencha a senha atual e a nova senha.</span>';
+    return;
+  }
+  if (senha_nova.length < 6) {
+    msgEl.innerHTML = '<span class="erro">A nova senha precisa ter pelo menos 6 caracteres.</span>';
+    return;
+  }
+  if (senha_nova !== confirmacao) {
+    msgEl.innerHTML = '<span class="erro">A confirmação não bate com a nova senha.</span>';
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/auth/trocar-senha', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ senha_atual, senha_nova }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      msgEl.innerHTML = '<span class="ok">Senha alterada com sucesso!</span>';
+      ['senhaAtualInput', 'senhaNovaInput', 'senhaNovaConfirmInput'].forEach(id => document.getElementById(id).value = '');
+    } else {
+      msgEl.innerHTML = `<span class="erro">${data.erro || 'Erro ao trocar a senha'}</span>`;
+    }
+  } catch (e) {
+    msgEl.innerHTML = '<span class="erro">Erro de conexão.</span>';
+  }
+}
+
 function blocoWebhook(titulo, servico, dados) {
   return `
     <div class="secao">
@@ -566,7 +635,7 @@ async function regenerarSecret(servico) {
 
 // ---------------- ROTEAMENTO DE ABAS ----------------
 function renderizarAba(aba) {
-  const funcoes = { contas: abaContas, atendentes: abaAtendentes, pixels: abaPixels, cotacao: abaCotacao, webhooks: abaWebhooks, marca: abaMarca };
+  const funcoes = { contas: abaContas, atendentes: abaAtendentes, pixels: abaPixels, cotacao: abaCotacao, webhooks: abaWebhooks, marca: abaMarca, conta: abaConta };
   funcoes[aba]();
 }
 
