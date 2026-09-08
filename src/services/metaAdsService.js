@@ -76,12 +76,25 @@ async function buscarGastoPorAnuncio(adAccountId, accessToken, dataInicio, dataF
 // Salva (ou atualiza) os registros de gasto no banco, convertendo pra BRL
 // quando a conta de anuncio for em outra moeda (USD, por ex).
 async function salvarGastoDiario(adAccountDbId, moedaOriginal, registros) {
+  // Antes, a cotacao era buscada UMA VEZ PRA CADA REGISTRO -- com uma conta
+  // gerando centenas de registros (varios anuncios x varios dias), isso
+  // estourava o limite de chamadas da API de cotacao (erro 429) e o sistema
+  // caia no valor de emergencia (5.00) em vez da cotacao real. Agora a gente
+  // busca a cotacao uma vez por data (nao uma vez por linha).
+  const cotacaoPorData = {};
+  async function cotacaoDaData(data) {
+    if (!(data in cotacaoPorData)) {
+      cotacaoPorData[data] = await obterCotacaoParaData(data);
+    }
+    return cotacaoPorData[data];
+  }
+
   for (const r of registros) {
     const gastoOriginal = parseFloat(r.spend || 0);
     let gastoBrl = gastoOriginal;
 
     if (moedaOriginal && moedaOriginal !== 'BRL') {
-      const cotacao = await obterCotacaoParaData(r.date_start);
+      const cotacao = await cotacaoDaData(r.date_start);
       gastoBrl = gastoOriginal * cotacao;
     }
 
