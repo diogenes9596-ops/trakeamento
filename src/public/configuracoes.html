@@ -22,6 +22,7 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
         <button data-aba="pixels">Pixels</button>
         <button data-aba="cotacao">Cotação do dólar</button>
         <button data-aba="webhooks">Webhooks</button>
+        <button data-aba="marca">Marca</button>
       </div>
       <div id="conteudoAba"></div>
     </main>
@@ -451,6 +452,92 @@ async function abaWebhooks() {
   `;
 }
 
+// ---------------- MARCA (logo, nome, tagline) ----------------
+async function abaMarca() {
+  const el = document.getElementById('conteudoAba');
+  const b = await fetch('/api/branding').then(r => r.json());
+
+  el.innerHTML = `
+    <div class="secao">
+      <h2>Marca do painel</h2>
+      <p class="desc">Personalize o logo e o nome que aparecem na tela de login e no menu lateral — cada cliente pode ver a própria marca aqui.</p>
+    </div>
+
+    <div class="painel" style="padding:20px; margin-bottom:20px;">
+      <div class="form-inline" style="align-items:flex-start;">
+        <div class="campo">
+          <label>Logo</label>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div id="previewLogo" style="width:56px; height:56px; border-radius:10px; background:#0b0d12; border:1px solid #23262f; display:flex; align-items:center; justify-content:center; overflow:hidden;">
+              ${b.logo_url ? `<img src="${b.logo_url}" style="width:100%; height:100%; object-fit:cover;">` : '<span style="color:#6b7280; font-size:11px;">sem logo</span>'}
+            </div>
+            <input type="file" id="inputLogo" accept="image/*" style="min-width:auto;">
+          </div>
+        </div>
+      </div>
+      <div class="form-inline">
+        <div class="campo">
+          <label>Nome da marca</label>
+          <input id="marcaNomeInput" value="${b.nome || ''}" placeholder="Ex: Sua Empresa">
+        </div>
+        <div class="campo">
+          <label>Tagline (embaixo do nome)</label>
+          <input id="marcaTaglineInput" value="${b.tagline || ''}" placeholder="Ex: TRACKING">
+        </div>
+      </div>
+      <div class="msg" id="msgMarca"></div>
+      <button class="primary" onclick="salvarMarca()">Salvar marca</button>
+    </div>
+  `;
+
+  document.getElementById('inputLogo').addEventListener('change', (e) => {
+    const arquivo = e.target.files[0];
+    if (!arquivo) return;
+    if (arquivo.size > 1.5 * 1024 * 1024) {
+      document.getElementById('msgMarca').innerHTML = '<span class="erro">Imagem muito grande. Use um arquivo de até ~1MB.</span>';
+      return;
+    }
+    const leitor = new FileReader();
+    leitor.onload = () => {
+      window.__novoLogoBase64 = leitor.result;
+      document.getElementById('previewLogo').innerHTML = `<img src="${leitor.result}" style="width:100%; height:100%; object-fit:cover;">`;
+    };
+    leitor.readAsDataURL(arquivo);
+  });
+}
+
+async function salvarMarca() {
+  const nome = document.getElementById('marcaNomeInput').value.trim();
+  const tagline = document.getElementById('marcaTaglineInput').value.trim();
+  const msgEl = document.getElementById('msgMarca');
+  msgEl.innerHTML = '';
+
+  if (!nome) {
+    msgEl.innerHTML = '<span class="erro">Digite o nome da marca.</span>';
+    return;
+  }
+
+  try {
+    const resp = await fetch('/api/branding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nome,
+        tagline,
+        logo_url: window.__novoLogoBase64 !== undefined ? window.__novoLogoBase64 : undefined,
+      }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      msgEl.innerHTML = '<span class="ok">Marca salva! Atualize a página pra ver no menu lateral.</span>';
+    } else {
+      msgEl.innerHTML = `<span class="erro">${data.erro || 'Erro ao salvar'}</span>`;
+    }
+  } catch (e) {
+    msgEl.innerHTML = '<span class="erro">Erro de conexão.</span>';
+  }
+}
+
 function blocoWebhook(titulo, servico, dados) {
   return `
     <div class="secao">
@@ -479,7 +566,7 @@ async function regenerarSecret(servico) {
 
 // ---------------- ROTEAMENTO DE ABAS ----------------
 function renderizarAba(aba) {
-  const funcoes = { contas: abaContas, atendentes: abaAtendentes, pixels: abaPixels, cotacao: abaCotacao, webhooks: abaWebhooks };
+  const funcoes = { contas: abaContas, atendentes: abaAtendentes, pixels: abaPixels, cotacao: abaCotacao, webhooks: abaWebhooks, marca: abaMarca };
   funcoes[aba]();
 }
 
