@@ -5,6 +5,11 @@ const pool = require('../db');
 // da API quando sincronizamos varios dias/anuncios de uma vez
 let cacheCotacaoAoVivo = { valor: null, buscadoEm: 0 };
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+// Se a API recusar a chamada (rate limit, fora do ar), espera um pouco antes
+// de tentar de novo -- sem isso, uma sincronizacao com muitos registros batia
+// na API repetidas vezes em sequencia e tomava 429 (limite excedido) toda vez.
+const RETRY_APOS_FALHA_MS = 60 * 1000; // 1 minuto
+let ultimaFalhaEm = 0;
 
 // Busca a cotação ao vivo (fonte: AwesomeAPI, mesma usada pela plataforma original)
 async function buscarCotacaoAoVivo() {
@@ -12,11 +17,19 @@ async function buscarCotacaoAoVivo() {
   if (cacheCotacaoAoVivo.valor && (agora - cacheCotacaoAoVivo.buscadoEm) < CACHE_TTL_MS) {
     return cacheCotacaoAoVivo.valor;
   }
+  if ((agora - ultimaFalhaEm) < RETRY_APOS_FALHA_MS) {
+    throw new Error('Aguardando antes de tentar a API de cotacao de novo (falhou ha pouco)');
+  }
 
-  const { data } = await axios.get('https://economia.awesomeapi.com.br/last/USD-BRL');
-  const valor = parseFloat(data.USDBRL.bid);
-  cacheCotacaoAoVivo = { valor, buscadoEm: agora };
-  return valor;
+  try {
+    const { data } = await axios.get('https://economia.awesomeapi.com.br/last/USD-BRL');
+    const valor = parseFloat(data.USDBRL.bid);
+    cacheCotacaoAoVivo = { valor, buscadoEm: agora };
+    return valor;
+  } catch (err) {
+    ultimaFalhaEm = agora;
+    throw err;
+  }
 }
 
 // Cotação a usar pra uma data especifica: primeiro tenta a cotação daquele dia
