@@ -11,24 +11,40 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
 const RETRY_APOS_FALHA_MS = 60 * 1000; // 1 minuto
 let ultimaFalhaEm = 0;
 
-// Busca a cotação ao vivo (fonte: AwesomeAPI, mesma usada pela plataforma original)
+// Busca a cotação ao vivo. Tenta a AwesomeAPI primeiro (mesma fonte da
+// plataforma original, atualizada em tempo real); se ela estiver fora do ar
+// ou bloqueada (rate limit), tenta uma segunda fonte gratuita como backup
+// antes de desistir -- assim o sistema consegue "sempre" ter uma cotacao
+// real, mesmo se uma das duas fontes estiver com problema.
 async function buscarCotacaoAoVivo() {
   const agora = Date.now();
   if (cacheCotacaoAoVivo.valor && (agora - cacheCotacaoAoVivo.buscadoEm) < CACHE_TTL_MS) {
     return cacheCotacaoAoVivo.valor;
   }
   if ((agora - ultimaFalhaEm) < RETRY_APOS_FALHA_MS) {
-    throw new Error('Aguardando antes de tentar a API de cotacao de novo (falhou ha pouco)');
+    throw new Error('Aguardando antes de tentar as APIs de cotacao de novo (falharam ha pouco)');
   }
 
+  // Fonte principal: AwesomeAPI (cotacao comercial, atualizada em tempo real)
   try {
     const { data } = await axios.get('https://economia.awesomeapi.com.br/last/USD-BRL');
     const valor = parseFloat(data.USDBRL.bid);
     cacheCotacaoAoVivo = { valor, buscadoEm: agora };
     return valor;
-  } catch (err) {
-    ultimaFalhaEm = agora;
-    throw err;
+  } catch (errPrincipal) {
+    // Fonte backup: ExchangeRate-API (open.er-api.com), gratuita e sem chave,
+    // atualizada uma vez por dia -- serve de rede de seguranca quando a
+    // fonte principal estiver bloqueada/fora do ar.
+    try {
+      const { data } = await axios.get('https://open.er-api.com/v6/latest/USD');
+      const valor = parseFloat(data.rates?.BRL);
+      if (!valor) throw new Error('Fonte backup nao retornou BRL');
+      cacheCotacaoAoVivo = { valor, buscadoEm: agora };
+      return valor;
+    } catch (errBackup) {
+      ultimaFalhaEm = agora;
+      throw errPrincipal;
+    }
   }
 }
 
@@ -48,12 +64,12 @@ async function obterCotacaoParaData(data) {
   try {
     return await buscarCotacaoAoVivo();
   } catch (err) {
-    // Se a API estiver com rate-limit, usa o ultimo valor conhecido em cache
+    // Se as duas fontes falharem, usa o ultimo valor conhecido em cache
     // antes de cair pro fallback fixo de 5.00
     if (cacheCotacaoAoVivo.valor) {
       return cacheCotacaoAoVivo.valor;
     }
-    console.error('Erro ao buscar cotacao ao vivo, usando 5.00 como ultimo recurso:', err.message);
+    console.error('Erro ao buscar cotacao ao vivo em ambas as fontes, usando 5.00 como ultimo recurso:', err.message);
     return 5.0;
   }
 }
