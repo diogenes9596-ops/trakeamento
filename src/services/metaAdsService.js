@@ -170,8 +170,13 @@ async function sincronizarEstrutura(adAccountDbId, adAccountId, accessToken, moe
   // sem converter, uma conta em USD mostrava o numero em dolar formatado
   // como se fosse real. Usa a cotacao de hoje, ja que orcamento e um valor
   // "atual" (nao historico por dia, como o gasto).
+  // IMPORTANTE: "hoje" aqui precisa ser a data no horario de Brasilia, nao UTC
+  // -- toISOString() sempre devolve UTC, o que a noite (depois das 21h) ja
+  // mostra o dia seguinte e faz o sistema nao achar a cotacao cadastrada pra
+  // hoje, caindo no fallback por engano.
+  const hojeBrasil = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
   const cotacao = moedaOriginal && moedaOriginal !== 'BRL'
-    ? await obterCotacaoParaData(new Date().toISOString().slice(0, 10))
+    ? await obterCotacaoParaData(hojeBrasil)
     : 1;
 
   const camposCampanha = 'id,name,status,daily_budget,lifetime_budget';
