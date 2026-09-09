@@ -205,6 +205,12 @@ router.get('/campanhas', async (req, res) => {
   const statusFiltro = ['todas', 'ativas', 'pausadas'].includes(req.query.status) ? req.query.status : 'todas';
   const busca = (req.query.busca || '').trim();
   const contaId = req.query.conta_id && req.query.conta_id !== 'todas' ? parseInt(req.query.conta_id, 10) : null;
+  // "Descer de nivel" com linhas marcadas (ex: marcou 2 campanhas e foi em
+  // Conjuntos) manda esses IDs aqui, pra so trazer os conjuntos/anuncios
+  // daquelas campanhas -- sem isso, a aba Conjuntos sempre mostrava TUDO,
+  // de qualquer campanha, mesmo com uma selecionada.
+  const paiNivel = ['campanhas', 'conjuntos'].includes(req.query.pai_nivel) ? req.query.pai_nivel : null;
+  const paiIds = (req.query.pai_ids || '').split(',').map(s => s.trim()).filter(Boolean);
 
   const tabela = { campanhas: 'meta_campaigns', conjuntos: 'meta_adsets', anuncios: 'meta_ads' }[nivel];
   const colunaGasto = { campanhas: 'campaign_id', conjuntos: 'adset_id', anuncios: 'ad_id' }[nivel];
@@ -223,6 +229,17 @@ router.get('/campanhas', async (req, res) => {
     if (contaId) {
       params.push(contaId);
       condicoes.push(`e.ad_account_id = $${params.length}`);
+    }
+    // 'campanhas' nao tem nivel pai, entao so filtramos aqui pra conjuntos/anuncios
+    let colunaFiltroPai = null;
+    if (paiNivel === 'campanhas' && (nivel === 'conjuntos' || nivel === 'anuncios')) {
+      colunaFiltroPai = 'campaign_id';
+    } else if (paiNivel === 'conjuntos' && nivel === 'anuncios') {
+      colunaFiltroPai = 'adset_id';
+    }
+    if (colunaFiltroPai && paiIds.length > 0) {
+      params.push(paiIds);
+      condicoes.push(`e.${colunaFiltroPai} = ANY($${params.length}::varchar[])`);
     }
     const whereExtra = condicoes.length ? `AND ${condicoes.join(' AND ')}` : '';
 
