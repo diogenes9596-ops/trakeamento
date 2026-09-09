@@ -17,7 +17,7 @@ function normalizarTelefoneBR(telefone) {
 // Lança uma venda manualmente (fora de qualquer webhook). Se o telefone bater
 // com um lead existente, a atribuição é herdada automaticamente.
 router.post('/lancar-venda', async (req, res) => {
-  const { telefone, email, nome, pais, estado, cidade, cep, produto_id, valor, data } = req.body;
+  const { telefone, email, nome, pais, estado, cidade, cep, produto_id, valor, data, pular_capi } = req.body;
 
   if (!telefone && !email) {
     return res.status(400).json({ erro: 'Informe pelo menos telefone ou email' });
@@ -68,7 +68,13 @@ router.post('/lancar-venda', async (req, res) => {
       }
     }
 
-    await enviarEventoCapi({ evento: 'Purchase', telefone: telefoneNormalizado, valor: valorFinal, eventId: idExterno });
+    // "pular_capi": true evita mandar o evento de Purchase pro Meta -- essencial
+    // ao importar historico (vendas antigas), ja que a compra original
+    // provavelmente ja disparou o evento de verdade na epoca; reenviar aqui
+    // so duplicaria a conversao no Gerenciador de Anuncios com a data de hoje.
+    if (!pular_capi) {
+      await enviarEventoCapi({ evento: 'Purchase', telefone: telefoneNormalizado, valor: valorFinal, eventId: idExterno });
+    }
 
     res.status(201).json(venda);
   } catch (err) {
