@@ -67,6 +67,370 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
           <button data-nivel="conjuntos">Conjuntos</button>
           <button data-nivel="anuncios">Anúncios</button>
         </div>
+        <div id="indicadorFiltroPai"></div>
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px 0; flex-wrap:wrap; gap:10px;">
+          <div style="display:flex; gap:6px;">
+            <span class="chip ativo" data-status="todas">Todas</span>
+            <span class="chip" data-status="ativas">Ativas</span>
+            <span class="chip" data-status="pausadas">Pausadas</span>
+          </div>
+          <input type="text" id="busca" placeholder="Filtrar por nome..." style="background:#0b0d12; border:1px solid #23262f; color:#e5e7eb; padding:6px 10px; border-radius:7px; font-size:12px;">
+        </div>
+        <div class="tabela-scroll" style="margin-top:12px;">
+          <table>
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="checkTodos" onchange="alternarTodos(this)"></th>
+                <th id="colNome">Campanhas</th>
+                <th>Orçamento</th>
+                <th>Lance</th>
+                <th>Gasto</th>
+                <th>Vendas</th>
+                <th>CPA</th>
+                <th>Faturamento</th>
+                <th>Lucro</th>
+                <th>ROAS</th>
+                <th>Agendamento</th>
+                <th>CPA Agend.</th>
+                <th>Leads</th>
+                <th>CPL</th>
+                <th>Boletos</th>
+                <th>Pix Ger</th>
+                <th>Recusados</th>
+                <th>Conta</th>
+              </tr>
+            </thead>
+            <tbody id="corpo"><tr><td colspan="18">Carregando...</td></tr></tbody>
+            <tfoot id="rodape"></tfoot>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+`;
+
+let nivelAtual = 'campanhas';
+let statusAtual = 'todas';
+const nomesColuna = { campanhas: 'Campanhas', conjuntos: 'Conjuntos', anuncios: 'Anúncios' };
+const ordemNivel = { campanhas: 0, conjuntos: 1, anuncios: 2 };
+
+// Selecao de checkboxes do nivel atual (pra poder "descer" filtrando o
+// proximo nivel) e o filtro herdado do nivel pai (ex: "so os conjuntos
+// da campanha X que eu marquei").
+let selecionados = new Set();
+let filtroPai = null; // { nivel: 'campanhas'|'conjuntos', ids: [...], nomes: [...] }
+let ultimasLinhas = [];
+
+function atualizarIndicadorFiltroPai() {
+  const el = document.getElementById('indicadorFiltroPai');
+  if (!filtroPai) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div style="padding:10px 16px; background:var(--bg-alt); border-bottom:1px solid var(--border); font-size:12px; color:var(--text-faint); display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+      <span>Mostrando apenas de:</span>
+      <strong style="color:var(--text);">${filtroPai.nomes.join(', ')}</strong>
+      <button onclick="limparFiltroPai()" style="background:transparent; color:var(--vermelho); padding:2px 8px; font-size:11px;">✕ Limpar filtro</button>
+    </div>
+  `;
+}
+
+function limparFiltroPai() {
+  filtroPai = null;
+  atualizarIndicadorFiltroPai();
+  carregarTabela();
+}
+
+function toggleSelecao(checkbox, id) {
+  if (checkbox.checked) selecionados.add(String(id));
+  else selecionados.delete(String(id));
+}
+
+function alternarTodos(headerCheckbox) {
+  const marcado = headerCheckbox.checked;
+  document.querySelectorAll('#corpo input[data-id]').forEach((cb) => {
+    cb.checked = marcado;
+    toggleSelecao(cb, cb.dataset.id);
+  });
+}
+
+document.querySelectorAll('.tabs-internas button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const novoNivel = btn.dataset.nivel;
+    if (novoNivel === nivelAtual) return;
+
+    if (ordemNivel[novoNivel] > ordemNivel[nivelAtual] && selecionados.size > 0) {
+      // Descendo um nivel com alguma linha marcada: filtra o proximo nivel
+      // so pelo que foi selecionado (ex: marcou 2 campanhas, foi em Conjuntos).
+      const nomes = ultimasLinhas
+        .filter((l) => selecionados.has(String(l.id)))
+        .map((l) => l.nome || l.id);
+      filtroPai = { nivel: nivelAtual, ids: Array.from(selecionados), nomes };
+    } else if (ordemNivel[novoNivel] <= ordemNivel[nivelAtual]) {
+      // Subindo de nivel (ou voltando pra Campanhas): limpa o filtro herdado.
+      filtroPai = null;
+    }
+    // Descendo sem nada marcado: mantem o filtroPai que ja existia (permite
+    // ir direto de Campanhas pra Anuncios sem passar por Conjuntos).
+
+    document.querySelectorAll('.tabs-internas button').forEach(b => b.classList.remove('ativo'));
+    btn.classList.add('ativo');
+    nivelAtual = novoNivel;
+    selecionados = new Set();
+    document.getElementById('checkTodos').checked = false;
+    document.getElementById('colNome').textContent = nomesColuna[nivelAtual];
+    atualizarIndicadorFiltroPai();
+    carregarTabela();
+  });
+});
+
+document.querySelectorAll('.chip[data-status]').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.chip[data-status]').forEach(c => c.classList.remove('ativo'));
+    chip.classList.add('ativo');
+    statusAtual = chip.dataset.status;
+    carregarTabela();
+  });
+});
+
+let timeoutBusca;
+document.getElementById('busca').addEventListener('input', () => {
+  clearTimeout(timeoutBusca);
+  timeoutBusca = setTimeout(carregarTabela, 350);
+});
+
+async function carregarCards() {
+  const inicio = document.getElementById('dataInicio').value;
+  const fim = document.getElementById('dataFim').value;
+  const qs = `?data_inicio=${inicio}&data_fim=${fim}`;
+
+  const ov = await fetch('/api/dashboard/overview' + qs).then(r => r.json());
+
+  document.getElementById('cInvestido').textContent = formatarMoeda(ov.investido_total);
+  document.getElementById('cInvestidoSub').textContent = `Investido: ${formatarMoeda(ov.gasto_total)} · Imposto: ${formatarMoeda(ov.imposto)}`;
+
+  document.getElementById('cFaturamento').textContent = formatarMoeda(ov.faturamento_total);
+  document.getElementById('cFaturamentoSub').textContent = ov.faturamento_por_plataforma
+    .map(p => `${p.plataforma}: ${formatarMoeda(p.total)}`).join(' · ') || '--';
+
+  const lucroEl = document.getElementById('cLucro');
+  lucroEl.textContent = formatarMoeda(ov.lucro);
+  lucroEl.className = 'valor ' + (ov.lucro >= 0 ? 'verde' : 'vermelho');
+  document.getElementById('cLucroSub').textContent = ov.lucro >= 0 ? 'lucro' : 'prejuízo';
+
+  document.getElementById('cLeads').textContent = ov.leads;
+  document.getElementById('cVendas').textContent = ov.vendas;
+  document.getElementById('cCpa').textContent = ov.cpa !== null ? formatarMoeda(ov.cpa) : '--';
+
+  document.getElementById('cBoletos').textContent = ov.boletos_gerados;
+  document.getElementById('cPix').textContent = ov.pix_gerados;
+  document.getElementById('cRecusados').textContent = ov.cartoes_recusados;
+}
+
+async function carregarTabela() {
+  const inicio = document.getElementById('dataInicio').value;
+  const fim = document.getElementById('dataFim').value;
+  const busca = document.getElementById('busca').value;
+  const contaId = window.contaFiltro || '';
+  let url = `/api/dashboard/campanhas?data_inicio=${inicio}&data_fim=${fim}&nivel=${nivelAtual}&status=${statusAtual}&busca=${encodeURIComponent(busca)}&conta_id=${contaId}`;
+  if (filtroPai) {
+    url += `&pai_nivel=${filtroPai.nivel}&pai_ids=${filtroPai.ids.map(encodeURIComponent).join(',')}`;
+  }
+  const dados = await fetch(url).then(r => r.json());
+  ultimasLinhas = dados.linhas || [];
+
+  const corpo = document.getElementById('corpo');
+  const rodape = document.getElementById('rodape');
+
+  if (!dados.linhas || dados.linhas.length === 0) {
+    corpo.innerHTML = '<tr><td colspan="18">Nenhum dado no período.</td></tr>';
+    rodape.innerHTML = '';
+    return;
+  }
+
+  const totais = { gasto: 0, vendas: 0, faturamento: 0, agendamentos: 0, faturamento_agendado: 0, leads: 0, boletos: 0, pix: 0, recusados: 0 };
+
+  corpo.innerHTML = dados.linhas.map(l => {
+    const gasto = parseFloat(l.gasto_total);
+    const faturamento = parseFloat(l.faturamento);
+    const lucro = faturamento - gasto;
+    const roas = gasto > 0 ? (faturamento / gasto) : null;
+    const cpl = l.leads > 0 ? (gasto / l.leads) : null;
+    const cpa = l.vendas > 0 ? (gasto / l.vendas) : null;
+    const cpaAgend = l.agendamentos > 0 ? (gasto / l.agendamentos) : null;
+
+    totais.gasto += gasto;
+    totais.vendas += parseInt(l.vendas || 0, 10);
+    totais.faturamento += faturamento;
+    totais.agendamentos += parseInt(l.agendamentos || 0, 10);
+    totais.leads += parseInt(l.leads || 0, 10);
+    totais.boletos += parseInt(l.boletos || 0, 10);
+    totais.pix += parseInt(l.pix || 0, 10);
+    totais.recusados += parseInt(l.recusados || 0, 10);
+
+    const nomeHtml = l.post_url
+      ? `<a href="${l.post_url}" target="_blank" rel="noopener" style="color:#7dc4ff; text-decoration:none;">${l.nome || l.id} ↗</a>`
+      : (l.nome || l.id);
+
+    return `<tr>
+      <td><input type="checkbox" data-id="${l.id}" onchange="toggleSelecao(this, '${l.id}')"></td>
+      <td>
+        <label class="toggle" style="vertical-align:middle; margin-right:8px;">
+          <input type="checkbox" ${l.status === 'ACTIVE' ? 'checked' : ''} onchange="alternarStatus('${l.id}', this)">
+          <span class="trilho"></span>
+        </label>
+        ${nomeHtml}
+      </td>
+      <td>${l.orcamento_diario ? formatarMoeda(l.orcamento_diario) + '/dia' : '--'}</td>
+      <td>${l.lance ? formatarMoeda(l.lance) : '--'}</td>
+      <td>${formatarMoeda(gasto)}</td>
+      <td>${l.vendas || 0}</td>
+      <td>${cpa !== null ? formatarMoeda(cpa) : '--'}</td>
+      <td>${formatarMoeda(faturamento)}</td>
+      <td style="color:${lucro >= 0 ? '#4ade80' : '#ff8b8b'}">${formatarMoeda(lucro)}</td>
+      <td>${roas !== null ? `<span class="badge ${roas >= 2 ? 'bom' : 'ruim'}">${roas.toFixed(2)}x</span>` : '--'}</td>
+      <td>${l.agendamentos || 0}</td>
+      <td>${cpaAgend !== null ? formatarMoeda(cpaAgend) : '--'}</td>
+      <td>${l.leads || 0}</td>
+      <td>${cpl !== null ? formatarMoeda(cpl) : '--'}</td>
+      <td>${l.boletos || 0}</td>
+      <td>${l.pix || 0}</td>
+      <td>${l.recusados || 0}</td>
+      <td>${l.conta || '--'}</td>
+    </tr>`;
+  }).join('');
+
+  const roasTotal = totais.gasto > 0 ? (totais.faturamento / totais.gasto) : null;
+  const cpaTotal = totais.vendas > 0 ? (totais.gasto / totais.vendas) : null;
+  const cpaAgendTotal = totais.agendamentos > 0 ? (totais.gasto / totais.agendamentos) : null;
+  const cplTotal = totais.leads > 0 ? (totais.gasto / totais.leads) : null;
+  const lucroTotal = totais.faturamento - totais.gasto;
+
+  rodape.innerHTML = `
+    <tr>
+      <td></td>
+      <td>TOTAL <span style="font-weight:400; color:#6b7280;">${dados.linhas.length} ${nomesColuna[nivelAtual].toLowerCase()}</span></td>
+      <td>--</td>
+      <td>--</td>
+      <td>${formatarMoeda(totais.gasto)}</td>
+      <td>${totais.vendas}</td>
+      <td>${cpaTotal !== null ? formatarMoeda(cpaTotal) : '--'}</td>
+      <td>${formatarMoeda(totais.faturamento)}</td>
+      <td style="color:${lucroTotal >= 0 ? '#4ade80' : '#ff8b8b'}">${formatarMoeda(lucroTotal)}</td>
+      <td>${roasTotal !== null ? roasTotal.toFixed(2) + 'x' : '--'}</td>
+      <td>${totais.agendamentos}</td>
+      <td>${cpaAgendTotal !== null ? formatarMoeda(cpaAgendTotal) : '--'}</td>
+      <td>${totais.leads}</td>
+      <td>${cplTotal !== null ? formatarMoeda(cplTotal) : '--'}</td>
+      <td>${totais.boletos}</td>
+      <td>${totais.pix}</td>
+      <td>${totais.recusados}</td>
+      <td></td>
+    </tr>
+  `;
+}
+
+async function alternarStatus(id, checkbox) {
+  checkbox.disabled = true;
+  const ativo = checkbox.checked;
+  try {
+    const resp = await fetch(`/api/dashboard/campanhas/${nivelAtual}/${id}/status`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ativo }),
+    });
+    if (!resp.ok) {
+      const data = await resp.json();
+      alert(data.erro || 'Erro ao atualizar status no Meta');
+      checkbox.checked = !ativo;
+    }
+  } catch (e) {
+    alert('Erro de conexão ao atualizar status');
+    checkbox.checked = !ativo;
+  } finally {
+    checkbox.disabled = false;
+  }
+}
+
+function carregarTudo() {
+  carregarCards();
+  carregarTabela();
+}
+
+iniciarFiltrosDeData(carregarTudo);
+window.sincronizarAgora = async () => {
+  await fetch('/api/dashboard/sincronizar-agora', { method: 'POST' });
+  carregarTudo();
+};
+carregarTudo();
+</script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Campanhas - Painel de Rastreamento</title>
+<link rel="stylesheet" href="/estilos.css">
+<style>
+  .toggle { position: relative; width: 34px; height: 19px; display: inline-block; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .trilho {
+    position: absolute; cursor: pointer; inset: 0; background: #3a3f4b;
+    border-radius: 20px; transition: 0.15s;
+  }
+  .toggle .trilho:before {
+    content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 2.5px;
+    background: white; border-radius: 50%; transition: 0.15s;
+  }
+  .toggle input:checked + .trilho { background: #22c55e; }
+  .toggle input:checked + .trilho:before { transform: translateX(15px); }
+  .toggle input:disabled + .trilho { opacity: 0.5; cursor: default; }
+  tfoot td { font-weight: 700; border-top: 2px solid #23262f; background: #12151c; }
+</style>
+</head>
+<body>
+<div class="layout" id="layout"></div>
+
+<script src="/comum.js"></script>
+<script>
+document.getElementById('layout').innerHTML = montarSidebar() + `
+  <div class="conteudo">
+    ${montarTopbar('Campanhas')}
+    <main>
+      <div class="cards">
+        <div class="card">
+          <div class="label">Investido (total)</div>
+          <div class="valor" id="cInvestido">--</div>
+          <div class="sub" id="cInvestidoSub">Investido: -- · Imposto: --</div>
+        </div>
+        <div class="card">
+          <div class="label">Faturamento</div>
+          <div class="valor verde" id="cFaturamento">--</div>
+          <div class="sub" id="cFaturamentoSub"></div>
+        </div>
+        <div class="card">
+          <div class="label">Lucro</div>
+          <div class="valor" id="cLucro">--</div>
+          <div class="sub" id="cLucroSub"></div>
+        </div>
+      </div>
+
+      <div class="cards">
+        <div class="card"><div class="label">Leads</div><div class="valor" id="cLeads">--</div></div>
+        <div class="card"><div class="label">Vendas</div><div class="valor" id="cVendas">--</div></div>
+        <div class="card"><div class="label">CPA médio</div><div class="valor" id="cCpa">--</div></div>
+      </div>
+
+      <div class="cards">
+        <div class="card"><div class="label">Boletos gerados</div><div class="valor" id="cBoletos">--</div></div>
+        <div class="card"><div class="label">Pix gerados</div><div class="valor" id="cPix">--</div></div>
+        <div class="card"><div class="label">Cartões recusados</div><div class="valor" id="cRecusados">--</div></div>
+      </div>
+
+      <div class="painel">
+        <div class="tabs-internas">
+          <button class="ativo" data-nivel="campanhas">Campanhas</button>
+          <button data-nivel="conjuntos">Conjuntos</button>
+          <button data-nivel="anuncios">Anúncios</button>
+        </div>
         <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px 0; flex-wrap:wrap; gap:10px;">
           <div style="display:flex; gap:6px;">
             <span class="chip ativo" data-status="todas">Todas</span>
