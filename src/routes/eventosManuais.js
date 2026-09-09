@@ -85,6 +85,29 @@ router.post('/lancar-venda', async (req, res) => {
 
 // --- Produtos (usados no dropdown do formulario acima) ---
 
+// Lanca um lead manualmente com data e ad_id conhecidos -- usado ao importar
+// historico de uma plataforma de rastreamento anterior, pra permitir que a
+// atribuicao (por telefone) funcione nas vendas ja lancadas daquele periodo.
+router.post('/lancar-lead', async (req, res) => {
+  const { telefone, ad_id, data_hora } = req.body;
+  if (!telefone) return res.status(400).json({ erro: 'Informe o telefone' });
+
+  try {
+    const telefoneNormalizado = normalizarTelefoneBR(telefone);
+    const recebidoEm = data_hora || null;
+    const result = await pool.query(
+      `INSERT INTO leads (telefone, origem, ad_id, recebido_em)
+       VALUES ($1, 'importado_historico', $2, COALESCE($3::timestamptz, NOW()))
+       RETURNING *`,
+      [telefoneNormalizado, ad_id || null, recebidoEm]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('Erro ao lancar lead manual:', err);
+    res.status(500).json({ erro: 'Erro ao lancar lead manual' });
+  }
+});
+
 router.get('/produtos', async (req, res) => {
   const result = await pool.query('SELECT * FROM produtos_manuais ORDER BY created_at DESC');
   res.json(result.rows);
