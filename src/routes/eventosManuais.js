@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { encontrarLeadParaVenda } = require('../services/attributionService');
+const { encontrarLeadParaVenda, atribuirVendasPendentes } = require('../services/attributionService');
 const { enviarEventoCapi } = require('../services/metaCapiService');
 
 const router = express.Router();
@@ -105,6 +105,27 @@ router.post('/lancar-lead', async (req, res) => {
   } catch (err) {
     console.error('Erro ao lancar lead manual:', err);
     res.status(500).json({ erro: 'Erro ao lancar lead manual' });
+  }
+});
+
+// Reseta a atribuicao das vendas de um periodo (zera ad_id/lead_id/atribuido_em)
+// e roda a atribuicao de novo -- usado depois de importar leads historicos,
+// pra essas vendas antigas terem chance de bater com os leads novos.
+router.post('/reatribuir', async (req, res) => {
+  const { data_inicio, data_fim } = req.body;
+  if (!data_inicio || !data_fim) return res.status(400).json({ erro: 'Informe data_inicio e data_fim' });
+
+  try {
+    await pool.query(
+      `UPDATE sales SET ad_id = NULL, lead_id = NULL, atribuido_em = NULL
+       WHERE recebido_em BETWEEN $1 AND ($2::date + INTERVAL '1 day')`,
+      [data_inicio, data_fim]
+    );
+    const relatorio = await atribuirVendasPendentes();
+    res.json({ sucesso: true, relatorio });
+  } catch (err) {
+    console.error('Erro ao reatribuir:', err);
+    res.status(500).json({ erro: 'Erro ao reatribuir' });
   }
 });
 
