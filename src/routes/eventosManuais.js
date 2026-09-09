@@ -17,7 +17,7 @@ function normalizarTelefoneBR(telefone) {
 // Lança uma venda manualmente (fora de qualquer webhook). Se o telefone bater
 // com um lead existente, a atribuição é herdada automaticamente.
 router.post('/lancar-venda', async (req, res) => {
-  const { telefone, email, nome, pais, estado, cidade, cep, produto_id, valor } = req.body;
+  const { telefone, email, nome, pais, estado, cidade, cep, produto_id, valor, data } = req.body;
 
   if (!telefone && !email) {
     return res.status(400).json({ erro: 'Informe pelo menos telefone ou email' });
@@ -25,7 +25,7 @@ router.post('/lancar-venda', async (req, res) => {
 
   try {
     const telefoneNormalizado = normalizarTelefoneBR(telefone);
-    const idExterno = `manual_${Date.now()}`;
+    const idExterno = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     let produtoNome = null;
     let valorFinal = parseFloat(valor || 0);
@@ -38,12 +38,18 @@ router.post('/lancar-venda', async (req, res) => {
       }
     }
 
+    // "data" (YYYY-MM-DD) e opcional -- usado pra lancar vendas de dias
+    // anteriores (ex: importando um historico da Skale) com a data real da
+    // venda, em vez de sempre cair em "agora". Sem isso, um lote de vendas
+    // de dias diferentes ficaria todo empilhado no dia do lancamento.
+    const recebidoEm = data ? `${data}T12:00:00Z` : null;
+
     const result = await pool.query(
-      `INSERT INTO sales (plataforma, id_externo, status, telefone, email, nome_cliente, valor, produto, payload_bruto)
-       VALUES ('manual', $1, 'aprovada', $2, $3, $4, $5, $6, $7)
+      `INSERT INTO sales (plataforma, id_externo, status, telefone, email, nome_cliente, valor, produto, payload_bruto, recebido_em)
+       VALUES ('manual', $1, 'aprovada', $2, $3, $4, $5, $6, $7, COALESCE($8::timestamptz, NOW()))
        RETURNING *`,
       [idExterno, telefoneNormalizado, email || null, nome || null, valorFinal, produtoNome,
-       JSON.stringify({ pais, estado, cidade, cep })]
+       JSON.stringify({ pais, estado, cidade, cep }), recebidoEm]
     );
 
     const venda = result.rows[0];
