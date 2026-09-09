@@ -631,4 +631,28 @@ router.get('/serie-diaria', async (req, res) => {
   }
 });
 
+// Busca anuncios pelo nome, trazendo tambem o nome da campanha e do conjunto
+// (o nome do anuncio sozinho pode se repetir em varias campanhas/contas
+// diferentes -- isso ajuda a achar o ID certo cruzando os tres nomes).
+router.get('/buscar-anuncio-completo', async (req, res) => {
+  const nomes = (req.query.nomes || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (nomes.length === 0) return res.json([]);
+  try {
+    const result = await pool.query(
+      `SELECT ma.id, ma.nome as anuncio, mc.nome as campanha, mas.nome as conjunto,
+              ma.ad_account_id, acc.nome as conta
+       FROM meta_ads ma
+       JOIN meta_adsets mas ON mas.id = ma.adset_id
+       JOIN meta_campaigns mc ON mc.id = ma.campaign_id
+       LEFT JOIN ad_accounts acc ON acc.id = ma.ad_account_id
+       WHERE ma.nome = ANY($1::varchar[])`,
+      [nomes]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao buscar anuncios' });
+  }
+});
+
 module.exports = router;
