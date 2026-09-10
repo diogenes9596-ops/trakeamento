@@ -63,7 +63,14 @@ router.post('/skale', async (req, res) => {
   const secretQuery = req.query.token;
   const secretHeader = req.headers['x-skale-secret'];
 
+  // Loga TODA tentativa de chegada, mesmo antes de validar o token -- se o
+  // token estiver errado/ausente, isso e o UNICO rastro que fica (o retorno
+  // 401 abaixo nao aparece nos Deploy Logs, so nos Network Logs).
+  console.log('Webhook Skale -- tentativa recebida. Token na URL:', secretQuery ? '(presente)' : '(ausente)',
+    '| Header x-skale-secret:', secretHeader ? '(presente)' : '(ausente)');
+
   if (!secretEsperado || (secretQuery !== secretEsperado && secretHeader !== secretEsperado)) {
+    console.warn('Webhook Skale REJEITADO: token nao confere.');
     return res.sendStatus(401);
   }
 
