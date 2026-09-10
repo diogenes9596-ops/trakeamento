@@ -153,12 +153,13 @@ router.post('/skale', async (req, res) => {
 
     await atribuirVendasPendentes();
 
-    // Envio pro Meta TEMPORARIAMENTE DESLIGADO a pedido do usuario, enquanto
-    // testamos se a marcacao (vendas/agendamento) esta funcionando direito.
-    // Antes disso disparava Purchase automatico pra toda venda aprovada.
-    // if (status === 'aprovada') {
-    //   await enviarEventoCapi({ evento: 'Purchase', telefone, valor, eventId: `skale_${idExternoTexto}` });
-    // }
+    // So dispara Purchase pro Meta quando o pagamento realmente confirma
+    // (o agendamento nao conta como conversao ainda), e nunca pra eventos de
+    // teste da propria Skale (body.test === true) -- assim os testes que o
+    // usuario mandar daqui pra frente nunca vazam pro Meta.
+    if (status === 'aprovada' && body.test !== true) {
+      await enviarEventoCapi({ evento: 'Purchase', telefone, valor, eventId: `skale_${idExternoTexto}` });
+    }
   } catch (err) {
     console.error('Erro ao processar webhook da Skale:', err);
   }
