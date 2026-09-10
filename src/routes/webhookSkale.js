@@ -149,11 +149,12 @@ router.post('/skale', async (req, res) => {
 
     await atribuirVendasPendentes();
 
-    // So dispara Purchase pro Meta quando o pagamento realmente confirma
-    // (o agendamento nao conta como conversao ainda)
-    if (status === 'aprovada') {
-      await enviarEventoCapi({ evento: 'Purchase', telefone, valor, eventId: `skale_${idExternoTexto}` });
-    }
+    // Envio pro Meta TEMPORARIAMENTE DESLIGADO a pedido do usuario, enquanto
+    // testamos se a marcacao (vendas/agendamento) esta funcionando direito.
+    // Antes disso disparava Purchase automatico pra toda venda aprovada.
+    // if (status === 'aprovada') {
+    //   await enviarEventoCapi({ evento: 'Purchase', telefone, valor, eventId: `skale_${idExternoTexto}` });
+    // }
   } catch (err) {
     console.error('Erro ao processar webhook da Skale:', err);
   }
