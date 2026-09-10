@@ -12,7 +12,11 @@ const router = express.Router();
 // manda, por isso nenhuma venda estava sendo marcada.
 const STATUS_PAGO = ['pago'];
 const STATUS_CANCELADO = ['cancelado', 'estornado', 'chargeback', 'reprovado', 'devolvido', 'frustrado'];
-const STATUS_AFTER_PAY = ['after pay', 'afterpay'];
+// Pedido recem-criado que ainda vai ser pago na entrega (Pay After Delivery).
+// Confirmado com um payload real de teste da Skale: o evento "order_created"
+// manda payment_status = "Aguardando Pagamento" (nao "After Pay" como a gente
+// tinha assumido antes por engano) -- mantemos os dois por seguranca.
+const STATUS_AFTER_PAY = ['after pay', 'afterpay', 'aguardando pagamento'];
 
 // Procura, em qualquer nivel do payload (nao sabemos o nome exato da chave
 // nem a profundidade), um VALOR que bata com um dos status conhecidos da
