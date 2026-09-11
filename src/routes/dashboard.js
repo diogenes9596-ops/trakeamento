@@ -489,6 +489,23 @@ router.delete('/vendas/:id', async (req, res) => {
   }
 });
 
+// Corrige manualmente o status de uma venda (usado pra reprocessar
+// pedidos que ficaram classificados errado por bug ja corrigido no webhook).
+const STATUS_VALIDOS = ['aprovada', 'cancelada', 'recusada', 'agendamento', 'desconhecido'];
+router.patch('/vendas/:id/status', async (req, res) => {
+  const { status } = req.body;
+  if (!STATUS_VALIDOS.includes(status)) {
+    return res.status(400).json({ erro: `status invalido, use um de: ${STATUS_VALIDOS.join(', ')}` });
+  }
+  try {
+    const r = await pool.query('UPDATE sales SET status = $1 WHERE id = $2 RETURNING id, nome_cliente, status', [status, req.params.id]);
+    res.json({ sucesso: true, venda: r.rows[0] || null });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao atualizar status' });
+  }
+});
+
 // Log de eventos enviados pro CAPI (aba "Eventos")
 router.get('/eventos', async (req, res) => {
   const tipo = req.query.tipo && req.query.tipo !== 'todos' ? req.query.tipo : null;
