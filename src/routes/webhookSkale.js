@@ -7,34 +7,33 @@ const { enviarEventoCapi } = require('../services/metaCapiService');
 const router = express.Router();
 
 // A Skale usa esse vocabulario em PORTUGUES pro status financeiro do pedido
-// (confirmado direto na API dela, campo "Status Pagamento") -- nosso codigo
-// antigo procurava strings em ingles ('payment_confirmed') que a Skale nunca
-// manda, por isso nenhuma venda estava sendo marcada.
-const STATUS_PAGO = ['pago'];
-const STATUS_CANCELADO = ['cancelado', 'estornado', 'chargeback', 'reprovado', 'devolvido', 'frustrado'];
-// Pedido recem-criado que ainda vai ser pago na entrega (Pay After Delivery).
-// Confirmado com um payload real de teste da Skale: o evento "order_created"
-// manda payment_status = "Aguardando Pagamento" (nao "After Pay" como a gente
-// tinha assumido antes por engano) -- mantemos os dois por seguranca.
-const STATUS_AFTER_PAY = ['after pay', 'afterpay', 'aguardando pagamento'];
+// (confirmado direto na API dela, campo "Status Pagamento").
+// IMPORTANTE: a deteccao de status usa campos ESPECIFICOS do payload
+// (transaction.payment_status / skaletracking.status_pagamento), nunca uma
+// busca cega por qualquer valor -- uma versao antiga desse codigo procurava
+// "o primeiro valor que bater com um status conhecido em qualquer lugar do
+// payload", o que confundia transaction.payment_method="After Pay" (a
+// FORMA de pagamento) com transaction.payment_status="Pago" (o status real).
+// Como "payment_method" aparece antes de "payment_status" no JSON da Skale,
+// pedidos After Pay que JA FORAM PAGOS ficavam presos como "agendamento"
+// pra sempre, nunca virando "aprovada".
+const STATUS_CANCELADO = ['cancelado', 'estornado', 'chargeback', 'reprovado', 'devolvido', 'frustrado', 'suspenso'];
 
-// Procura, em qualquer nivel do payload (nao sabemos o nome exato da chave
-// nem a profundidade), um VALOR que bata com um dos status conhecidos da
-// Skale. Assim a deteccao funciona mesmo se o campo se chamar
-// status_pagamento, statusPagamento, status, etc.
-function buscarStatusConhecido(obj, listas, profundidade = 0) {
+// Procura, em qualquer nivel do payload, um VALOR que bata com uma lista de
+// sinonimos -- usado só pra cancelamento, que pode vir com varias palavras
+// diferentes e em campos menos previsíveis. NUNCA usar isso pra detectar
+// "pago" nem "after pay", que precisam vir de um campo especifico (ver acima).
+function buscarValorConhecido(obj, lista, profundidade = 0) {
   if (!obj || typeof obj !== 'object' || profundidade > 6) return null;
   for (const valor of Object.values(obj)) {
     if (typeof valor === 'string') {
       const normalizado = valor.trim().toLowerCase();
-      for (const lista of listas) {
-        if (lista.includes(normalizado)) return normalizado;
-      }
+      if (lista.includes(normalizado)) return normalizado;
     }
   }
   for (const valor of Object.values(obj)) {
     if (valor && typeof valor === 'object') {
-      const achado = buscarStatusConhecido(valor, listas, profundidade + 1);
+      const achado = buscarValorConhecido(valor, lista, profundidade + 1);
       if (achado) return achado;
     }
   }
@@ -123,24 +122,44 @@ router.post('/skale', async (req, res) => {
     // ticket medio dessa loja), corrige dividindo por 100.
     const valor = valorBruto > 10000 ? valorBruto / 100 : valorBruto;
 
-    const statusEncontrado = buscarStatusConhecido(body, [STATUS_PAGO, STATUS_CANCELADO, STATUS_AFTER_PAY]);
-    const pago = STATUS_PAGO.includes(statusEncontrado);
-    const cancelado = STATUS_CANCELADO.includes(statusEncontrado);
-    const afterPaySemPagar = STATUS_AFTER_PAY.includes(statusEncontrado) && !pago;
+    // Campos ESPECIFICOS (nao busca cega) -- confirmados com payloads reais
+    // da Skale: transaction.payment_status é o status financeiro de verdade
+    // ("Pago", "Aguardando Pagamento", "After Pay", "Recusado"...), e
+    // transaction.payment_method é a FORMA escolhida pelo cliente
+    // ("Antecipada" = paga na hora, "After Pay" = paga na entrega).
+    // skaletracking.status_pagamento é usado como reforço/fallback.
+    const statusPagamento = String(
+      body?.transaction?.payment_status || body?.skaletracking?.status_pagamento || ''
+    ).trim().toLowerCase();
+    const formaPagamento = String(body?.transaction?.payment_method || '').trim().toLowerCase();
+
+    const pago = statusPagamento === 'pago';
+    const recusado = statusPagamento.includes('recus');
+    const cancelado = !recusado && (
+      STATUS_CANCELADO.includes(statusPagamento) || !!buscarValorConhecido(body, STATUS_CANCELADO)
+    );
+    const isAfterPay = formaPagamento === 'after pay' || formaPagamento === 'afterpay';
 
     // Regra da Skale (Pay After Delivery):
-    // - pedido criado com pagamento "After Pay" e ainda nao pago -> vira AGENDAMENTO
-    //   (fica atribuido por telefone, mas NAO dispara Purchase pro Meta ainda)
-    // - quando o pagamento confirma depois -> vira VENDA de verdade e dispara Purchase
+    // - After Pay ainda nao pago -> vira AGENDAMENTO (fica atribuido por
+    //   telefone, mas NAO dispara Purchase pro Meta ainda -- desligado)
+    // - qualquer pedido (Antecipada ou After Pay) com pagamento confirmado
+    //   -> vira VENDA de verdade (aprovada)
+    // - Antecipada (Pix/cartao) ainda aguardando confirmacao -> nao e venda
+    //   nem entrega agendada; a propria Skale tambem exclui isso do
+    //   faturamento dela. Fica "desconhecido" (aparece como Pendente no
+    //   painel) ate o proximo evento (pago/recusado/cancelado) atualizar.
     let status;
-    if (pago) {
-      status = 'aprovada';
-    } else if (cancelado) {
+    if (cancelado) {
       status = 'cancelada';
-    } else if (afterPaySemPagar) {
+    } else if (recusado) {
+      status = 'recusada';
+    } else if (pago) {
+      status = 'aprovada';
+    } else if (isAfterPay) {
       status = 'agendamento';
     } else {
-      status = statusEncontrado || 'desconhecido';
+      status = 'desconhecido';
     }
 
     await pool.query(
