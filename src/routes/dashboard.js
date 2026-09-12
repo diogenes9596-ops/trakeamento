@@ -489,15 +489,14 @@ router.delete('/vendas/:id', async (req, res) => {
   }
 });
 
-// Corrige manualmente o status (e opcionalmente a data, plataforma e
-// id_externo) de uma venda -- usado pra reprocessar pedidos que ficaram
-// classificados/datados errado por bug ja corrigido no webhook, e tambem
-// pra converter lancamentos manuais (plataforma='manual') em registros
-// "skale" de verdade (plataforma='skale' + id_externo='ven_XXXXX'), evitando
-// que um webhook futuro do mesmo pedido crie uma venda duplicada.
+// Corrige manualmente o status (e opcionalmente data, plataforma, id_externo,
+// ad_id e lead_id) de uma venda -- usado pra reprocessar pedidos que ficaram
+// classificados/datados errado por bug ja corrigido no webhook, converter
+// lancamentos manuais em registros "skale" de verdade (evitando duplicata
+// futura), e restaurar atribuicao de campanha perdida numa deduplicacao.
 const STATUS_VALIDOS = ['aprovada', 'cancelada', 'recusada', 'agendamento', 'desconhecido'];
 router.patch('/vendas/:id/status', async (req, res) => {
-  const { status, recebido_em, plataforma, id_externo } = req.body;
+  const { status, recebido_em, plataforma, id_externo, ad_id, lead_id } = req.body;
   if (!STATUS_VALIDOS.includes(status)) {
     return res.status(400).json({ erro: `status invalido, use um de: ${STATUS_VALIDOS.join(', ')}` });
   }
@@ -506,9 +505,12 @@ router.patch('/vendas/:id/status', async (req, res) => {
       `UPDATE sales SET status = $1,
                         recebido_em = COALESCE($3::timestamptz, recebido_em),
                         plataforma = COALESCE($4, plataforma),
-                        id_externo = COALESCE($5, id_externo)
-       WHERE id = $2 RETURNING id, nome_cliente, status, recebido_em, plataforma, id_externo`,
-      [status, req.params.id, recebido_em || null, plataforma || null, id_externo || null]
+                        id_externo = COALESCE($5, id_externo),
+                        ad_id = COALESCE($6, ad_id),
+                        lead_id = COALESCE($7::int, lead_id),
+                        atribuido_em = CASE WHEN $6 IS NOT NULL THEN NOW() ELSE atribuido_em END
+       WHERE id = $2 RETURNING id, nome_cliente, status, recebido_em, plataforma, id_externo, ad_id, lead_id`,
+      [status, req.params.id, recebido_em || null, plataforma || null, id_externo || null, ad_id || null, lead_id || null]
     );
     res.json({ sucesso: true, venda: r.rows[0] || null });
   } catch (err) {
