@@ -63,7 +63,11 @@ function extrairDataPagamento(body) {
   const t = body?.transaction || {};
   if (t.paid_at_data) {
     const hora = t.paid_at_hora || '00:00:00';
-    const d = new Date(`${t.paid_at_data}T${hora}`);
+    // -03:00 fixo (horario de Brasilia) -- sem isso, quando a Skale nao manda
+    // a hora exata (paid_at_hora nulo), a meia-noite ficava ambigua entre UTC
+    // e BRT, podendo jogar a venda pro dia anterior dependendo do fuso usado
+    // na comparacao. A Skale e o negocio operam em horario de Brasilia.
+    const d = new Date(`${t.paid_at_data}T${hora}-03:00`);
     if (!isNaN(d.getTime())) return d;
   }
   if (t.paid_at) {
