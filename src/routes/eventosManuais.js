@@ -155,4 +155,42 @@ router.delete('/produtos/:id', async (req, res) => {
   res.json({ sucesso: true });
 });
 
+// Envio MANUAL e pontual de Purchase pro Meta CAPI para as vendas aprovadas
+// de uma data (default: hoje). Isso e so-esse-disparo, a pedido do usuario --
+// o envio automatico continua desligado permanentemente no webhook da Skale.
+router.post('/enviar-vendas-meta', async (req, res) => {
+  const data = req.body?.data || new Date().toISOString().slice(0, 10);
+  try {
+    const vendas = await pool.query(
+      `SELECT id, id_externo, plataforma, telefone, valor, nome_cliente
+       FROM sales
+       WHERE status = 'aprovada' AND recebido_em BETWEEN $1 AND ($1::date + INTERVAL '1 day')`,
+      [data]
+    );
+
+    const enviados = [];
+    const falhas = [];
+    for (const v of vendas.rows) {
+      try {
+        await enviarEventoCapi({
+          evento: 'Purchase',
+          telefone: v.telefone,
+          valor: parseFloat(v.valor),
+          eventId: `manual_${v.plataforma || 'skale'}_${v.id_externo || v.id}`,
+        });
+        enviados.push({ id: v.id, nome: v.nome_cliente, valor: v.valor });
+      } catch (err) {
+        console.error(`Erro ao enviar venda ${v.id} pro Meta:`, err.message);
+        falhas.push({ id: v.id, nome: v.nome_cliente, erro: err.message });
+      }
+    }
+
+    res.json({ data, total_vendas: vendas.rows.length, enviados, falhas });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao enviar vendas pro Meta' });
+  }
+});
+
 module.exports = router;
+
