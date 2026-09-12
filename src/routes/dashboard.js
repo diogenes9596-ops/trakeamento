@@ -489,20 +489,26 @@ router.delete('/vendas/:id', async (req, res) => {
   }
 });
 
-// Corrige manualmente o status (e opcionalmente a data) de uma venda --
-// usado pra reprocessar pedidos que ficaram classificados/datados errado
-// por bug ja corrigido no webhook.
+// Corrige manualmente o status (e opcionalmente a data, plataforma e
+// id_externo) de uma venda -- usado pra reprocessar pedidos que ficaram
+// classificados/datados errado por bug ja corrigido no webhook, e tambem
+// pra converter lancamentos manuais (plataforma='manual') em registros
+// "skale" de verdade (plataforma='skale' + id_externo='ven_XXXXX'), evitando
+// que um webhook futuro do mesmo pedido crie uma venda duplicada.
 const STATUS_VALIDOS = ['aprovada', 'cancelada', 'recusada', 'agendamento', 'desconhecido'];
 router.patch('/vendas/:id/status', async (req, res) => {
-  const { status, recebido_em } = req.body;
+  const { status, recebido_em, plataforma, id_externo } = req.body;
   if (!STATUS_VALIDOS.includes(status)) {
     return res.status(400).json({ erro: `status invalido, use um de: ${STATUS_VALIDOS.join(', ')}` });
   }
   try {
     const r = await pool.query(
-      `UPDATE sales SET status = $1, recebido_em = COALESCE($3::timestamptz, recebido_em)
-       WHERE id = $2 RETURNING id, nome_cliente, status, recebido_em`,
-      [status, req.params.id, recebido_em || null]
+      `UPDATE sales SET status = $1,
+                        recebido_em = COALESCE($3::timestamptz, recebido_em),
+                        plataforma = COALESCE($4, plataforma),
+                        id_externo = COALESCE($5, id_externo)
+       WHERE id = $2 RETURNING id, nome_cliente, status, recebido_em, plataforma, id_externo`,
+      [status, req.params.id, recebido_em || null, plataforma || null, id_externo || null]
     );
     res.json({ sucesso: true, venda: r.rows[0] || null });
   } catch (err) {
