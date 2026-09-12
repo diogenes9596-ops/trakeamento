@@ -54,6 +54,25 @@ function primeiroValor(body, caminhos) {
   return undefined;
 }
 
+// Extrai a data REAL do pagamento do payload da Skale (campos
+// transaction.paid_at_data + paid_at_hora, ou transaction.paid_at como
+// fallback). So preenchido quando o pagamento ja confirmou -- e exatamente
+// o que a Skale usa como "data_pagamento" nos relatorios dela, entao usar
+// isso aqui garante que "hoje" signifique a mesma coisa nos dois sistemas.
+function extrairDataPagamento(body) {
+  const t = body?.transaction || {};
+  if (t.paid_at_data) {
+    const hora = t.paid_at_hora || '00:00:00';
+    const d = new Date(`${t.paid_at_data}T${hora}`);
+    if (!isNaN(d.getTime())) return d;
+  }
+  if (t.paid_at) {
+    const d = new Date(String(t.paid_at).replace(' ', 'T'));
+    if (!isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
 // Ping de verificacao (GET) que algumas integracoes mandam antes de comecar
 // a enviar os eventos de verdade via POST -- sem isso, a Skale pode considerar
 // o webhook invalido e nunca mandar as vendas de verdade.
@@ -162,12 +181,22 @@ router.post('/skale', async (req, res) => {
       status = 'desconhecido';
     }
 
+    // Data que vai contar como "recebido_em" (o "hoje" da nossa plataforma):
+    // - se o pedido ACABOU de ser pago, usa a data REAL do pagamento que a
+    //   Skale manda -- assim nosso "hoje" bate com o "hoje" da Skale, que
+    //   tambem conta por data de pagamento.
+    // - em qualquer outro caso (agendamento, pendente, cancelada...) nao
+    //   mexe na data -- continua sendo quando o pedido/evento chegou aqui.
+    const dataPagamento = status === 'aprovada' ? extrairDataPagamento(body) : null;
+
     await pool.query(
-      `INSERT INTO sales (plataforma, id_externo, status, telefone, email, nome_cliente, valor, produto, payload_bruto)
-       VALUES ('skale', $1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO sales (plataforma, id_externo, status, telefone, email, nome_cliente, valor, produto, payload_bruto, recebido_em)
+       VALUES ('skale', $1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()))
        ON CONFLICT (plataforma, id_externo)
-       DO UPDATE SET status = EXCLUDED.status, valor = EXCLUDED.valor, atribuido_em = NULL`,
-      [idExternoTexto, status, telefone, email, nomeCliente, valor, produto, JSON.stringify(body)]
+       DO UPDATE SET status = EXCLUDED.status, valor = EXCLUDED.valor, atribuido_em = NULL,
+                     payload_bruto = EXCLUDED.payload_bruto,
+                     recebido_em = COALESCE($9::timestamptz, sales.recebido_em)`,
+      [idExternoTexto, status, telefone, email, nomeCliente, valor, produto, JSON.stringify(body), dataPagamento]
     );
 
     await atribuirVendasPendentes();
