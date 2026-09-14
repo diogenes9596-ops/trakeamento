@@ -62,12 +62,23 @@ function primeiroValor(body, caminhos) {
 function extrairDataPagamento(body) {
   const t = body?.transaction || {};
   if (t.paid_at_data) {
-    const hora = t.paid_at_hora || '00:00:00';
-    // -03:00 fixo (horario de Brasilia) -- sem isso, quando a Skale nao manda
-    // a hora exata (paid_at_hora nulo), a meia-noite ficava ambigua entre UTC
-    // e BRT, podendo jogar a venda pro dia anterior dependendo do fuso usado
-    // na comparacao. A Skale e o negocio operam em horario de Brasilia.
-    const d = new Date(`${t.paid_at_data}T${hora}-03:00`);
+    if (t.paid_at_hora) {
+      const d = new Date(`${t.paid_at_data}T${t.paid_at_hora}-03:00`);
+      if (!isNaN(d.getTime())) return d;
+    }
+    // paid_at_hora ausente -- usar meia-noite quebra a ATRIBUICAO por
+    // telefone: o lead que gerou a venda quase sempre chega DEPOIS da
+    // meia-noite mas ANTES do horario real do pagamento (ex: lead as 10h,
+    // pagamento as 13h) -- forcar meia-noite fazia o sistema achar que o
+    // lead "veio depois" da venda e nunca atribuir. Usamos updated_at (que
+    // tem hora completa) quando for do mesmo dia do pagamento -- e o
+    // proprio evento que confirmou o "Pago", entao e a hora real mais
+    // proxima que temos.
+    if (t.updated_at_data === t.paid_at_data && t.updated_at_hora) {
+      const d = new Date(`${t.updated_at_data}T${t.updated_at_hora}-03:00`);
+      if (!isNaN(d.getTime())) return d;
+    }
+    const d = new Date(`${t.paid_at_data}T00:00:00-03:00`);
     if (!isNaN(d.getTime())) return d;
   }
   if (t.paid_at) {
