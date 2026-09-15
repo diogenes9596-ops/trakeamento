@@ -20,8 +20,8 @@ const router = express.Router();
 const STATUS_CANCELADO = ['cancelado', 'estornado', 'chargeback', 'reprovado', 'devolvido', 'frustrado', 'suspenso'];
 
 // Procura, em qualquer nivel do payload, um VALOR que bata com uma lista de
-// sinonimos -- usado só pra cancelamento, que pode vir com varias palavras
-// diferentes e em campos menos previsíveis. NUNCA usar isso pra detectar
+// sinonimos -- usado sÃ³ pra cancelamento, que pode vir com varias palavras
+// diferentes e em campos menos previsÃ­veis. NUNCA usar isso pra detectar
 // "pago" nem "after pay", que precisam vir de um campo especifico (ver acima).
 function buscarValorConhecido(obj, lista, profundidade = 0) {
   if (!obj || typeof obj !== 'object' || profundidade > 6) return null;
@@ -41,7 +41,7 @@ function buscarValorConhecido(obj, lista, profundidade = 0) {
 }
 
 // Tenta uma lista de "caminhos" (funcoes) no payload, em ordem, e devolve o
-// primeiro valor nao vazio. Usado pra cobrir os formatos mais prováveis que
+// primeiro valor nao vazio. Usado pra cobrir os formatos mais provÃ¡veis que
 // a Skale pode usar pra cada campo, ja que nao temos um payload real
 // confirmado ainda -- fica facil adicionar mais um caminho se precisar.
 function primeiroValor(body, caminhos) {
@@ -157,11 +157,11 @@ router.post('/skale', async (req, res) => {
     const valor = valorBruto > 10000 ? valorBruto / 100 : valorBruto;
 
     // Campos ESPECIFICOS (nao busca cega) -- confirmados com payloads reais
-    // da Skale: transaction.payment_status é o status financeiro de verdade
+    // da Skale: transaction.payment_status Ã© o status financeiro de verdade
     // ("Pago", "Aguardando Pagamento", "After Pay", "Recusado"...), e
-    // transaction.payment_method é a FORMA escolhida pelo cliente
+    // transaction.payment_method Ã© a FORMA escolhida pelo cliente
     // ("Antecipada" = paga na hora, "After Pay" = paga na entrega).
-    // skaletracking.status_pagamento é usado como reforço/fallback.
+    // skaletracking.status_pagamento Ã© usado como reforÃ§o/fallback.
     const statusPagamento = String(
       body?.transaction?.payment_status || body?.skaletracking?.status_pagamento || ''
     ).trim().toLowerCase();
@@ -216,10 +216,25 @@ router.post('/skale', async (req, res) => {
 
     await atribuirVendasPendentes();
 
-    // Envio pro Meta DESLIGADO permanentemente a pedido do usuario -- a
-    // funcao desse webhook e so puxar da Skale e marcar aqui na plataforma
-    // (pedido criado -> agendamento, pagamento aprovado -> vendas). Nada
-    // disso deve disparar evento pro Meta.
+    // Envio pro Meta CAPI -- REATIVADO a pedido explicito do usuario em
+    // 15/09/2026 (substitui a regra anterior de "nunca enviar automatico").
+    // So dispara Purchase quando o pedido vira venda de verdade (aprovada),
+    // buscando o ctwa_clid do lead que a atribuicao acima ja casou (se achou
+    // algum), pra dar ao Meta o mesmo identificador do clique no anuncio que
+    // originou a conversa -- sem isso o match fica so por telefone (hash).
+    if (status === 'aprovada') {
+      let ctwaClid = null;
+      try {
+        const r = await pool.query(
+          `SELECT l.ctwa_clid FROM sales s
+           JOIN leads l ON l.id = s.lead_id
+           WHERE s.plataforma = 'skale' AND s.id_externo = $1`,
+          [idExternoTexto]
+        );
+        ctwaClid = r.rows[0]?.ctwa_clid || null;
+      } catch (e) { /* segue sem ctwa_clid se der erro na busca */ }
+      await enviarEventoCapi({ evento: 'Purchase', telefone, valor, eventId: `skale_${idExternoTexto}`, ctwaClid });
+    }
   } catch (err) {
     console.error('Erro ao processar webhook da Skale:', err);
   }
