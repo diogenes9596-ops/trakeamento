@@ -1,7 +1,6 @@
 const express = require('express');
 const pool = require('../db');
 const { obterSecret } = require('../services/webhookSecretsService');
-const { enviarEventoCapi } = require('../services/metaCapiService');
 
 const router = express.Router();
 
@@ -51,7 +50,7 @@ router.post('/datacrazy', async (req, res) => {
     const { phone, ctwa_clid, source_id, source_url, page_id } = extrairCampos(req.body);
 
     if (!phone) {
-      console.warn('Webhook DataCrazy sem phone — payload ignorado.');
+      console.warn('Webhook DataCrazy sem phone â payload ignorado.');
       return;
     }
 
@@ -65,15 +64,10 @@ router.post('/datacrazy', async (req, res) => {
 
     console.log(`Lead DataCrazy registrado: ${telefone} <- anuncio ${source_id || 'organico'}`);
 
-    // So dispara o evento Lead pro CAPI quando realmente veio de um clique em anuncio
-    if (ctwa_clid) {
-      await enviarEventoCapi({
-        evento: 'Lead',
-        telefone,
-        eventSourceUrl: source_url,
-        eventId: `lead_${telefone}_${Date.now()}`,
-      });
-    }
+    // Envio pro Meta CAPI DESLIGADO permanentemente a pedido do usuario --
+    // mesma regra ja aplicada ao webhook da Skale (ver webhookSkale.js).
+    // Esse webhook so registra o lead aqui na plataforma; nada daqui deve
+    // disparar evento automatico pro Meta.
   } catch (err) {
     console.error('Erro ao processar webhook do DataCrazy:', err);
   }
