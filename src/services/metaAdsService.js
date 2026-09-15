@@ -149,8 +149,8 @@ async function sincronizarTodasContas(diasParaTras = 30) {
     try {
       const registros = await buscarGastoPorAnuncio(conta.ad_account_id, conta.access_token, dataInicio, dataFim);
       await salvarGastoDiario(conta.id, conta.moeda, registros);
-      await sincronizarEstrutura(conta.id, conta.ad_account_id, conta.access_token, conta.moeda);
-      relatorio.push({ conta: conta.nome, registros: registros.length, ok: true });
+      const estrutura = await sincronizarEstrutura(conta.id, conta.ad_account_id, conta.access_token, conta.moeda);
+      relatorio.push({ conta: conta.nome, registros: registros.length, ok: true, removidos: estrutura.removidos });
     } catch (err) {
       const mensagem = err.response?.data?.error?.message || err.message;
       console.error(`Erro ao sincronizar conta ${conta.nome}:`, mensagem);
