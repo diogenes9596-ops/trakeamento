@@ -11,7 +11,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
 const RETRY_APOS_FALHA_MS = 60 * 1000; // 1 minuto
 let ultimaFalhaEm = 0;
 
-// Busca a cotação ao vivo. Tenta a AwesomeAPI primeiro (mesma fonte da
+// Busca a cotaÃ§Ã£o ao vivo. Tenta a AwesomeAPI primeiro (mesma fonte da
 // plataforma original, atualizada em tempo real); se ela estiver fora do ar
 // ou bloqueada (rate limit), tenta uma segunda fonte gratuita como backup
 // antes de desistir -- assim o sistema consegue "sempre" ter uma cotacao
@@ -48,7 +48,7 @@ async function buscarCotacaoAoVivo() {
   }
 }
 
-// Cotação a usar pra uma data especifica: primeiro tenta a cotação daquele dia
+// CotaÃ§Ã£o a usar pra uma data especifica: primeiro tenta a cotaÃ§Ã£o daquele dia
 // cadastrada manualmente; se nao tiver, usa o fallback global (automatico ou manual)
 async function obterCotacaoParaData(data) {
   const porDia = await pool.query('SELECT cotacao FROM fx_rates WHERE data = $1', [data]);
@@ -62,7 +62,18 @@ async function obterCotacaoParaData(data) {
   }
 
   try {
-    return await buscarCotacaoAoVivo();
+    const valor = await buscarCotacaoAoVivo();
+    // Persiste a cotacao pra essa data assim que ela e descoberta pela
+    // primeira vez -- sem isso, essa funcao nunca gravava nada em fx_rates
+    // (so a rota manual /fx/dia gravava), entao TODA conversao de gasto
+    // historico em USD recalculava do zero a cotacao "ao vivo" (a de HOJE)
+    // a cada rodada do cron -- inclusive pra dias ja fechados ha semanas.
+    // O valor em BRL de um gasto antigo ficava mudando toda vez que o
+    // dolar variava, em vez de ficar fixo no que foi calculado na epoca.
+    // Nao e o cambio historico exato do dia (a fonte so tem cotacao em
+    // tempo real), mas ao menos fica ESTAVEL a partir de agora.
+    await salvarCotacaoDoDia(data, valor);
+    return valor;
   } catch (err) {
     // Se as duas fontes falharem, usa o ultimo valor conhecido em cache
     // antes de cair pro fallback fixo de 5.00
