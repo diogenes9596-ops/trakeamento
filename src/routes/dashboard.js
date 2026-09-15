@@ -139,6 +139,28 @@ router.get('/gateway', async (req, res) => {
 
 // Dispara manualmente a sincronizacao de gasto + atribuicao (util pra testar,
 // alem do cron automatico configurado em src/jobs/pullAdSpend.js)
+// Reseta a atribuicao (atribuido_em = NULL) de vendas aprovadas sem ad_id,
+// forcando o motor de atribuicao a reprocessar essas vendas -- usado depois
+// de mudar JANELA_ATRIBUICAO_HORAS, pra dar chance de vendas antigas sem
+// atribuicao encontrarem um lead agora que a janela ficou maior.
+router.post('/reprocessar-atribuicao', async (req, res) => {
+  const { data_inicio, data_fim } = req.body || {};
+  try {
+    const filtroData = data_inicio && data_fim
+      ? `AND recebido_em BETWEEN '${data_inicio}' AND ('${data_fim}'::date + INTERVAL '1 day')`
+      : '';
+    const reset = await pool.query(
+      `UPDATE sales SET atribuido_em = NULL
+       WHERE status = 'aprovada' AND ad_id IS NULL ${filtroData}`
+    );
+    const resultado = await atribuirVendasPendentes();
+    res.json({ resetadas: reset.rowCount, ...resultado });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao reprocessar atribuicao' });
+  }
+});
+
 router.post('/sincronizar-agora', async (req, res) => {
   try {
     const relatorioGasto = await sincronizarTodasContas();
@@ -197,7 +219,7 @@ router.get('/funil', async (req, res) => {
 });
 
 // Tabela de Campanhas / Conjuntos / Anuncios (a mesma consulta serve pros 3
-// niveis, só muda o agrupamento). Agora cruza com a estrutura real do Meta
+// niveis, sÃ³ muda o agrupamento). Agora cruza com a estrutura real do Meta
 // (nome, status, orcamento) sincronizada em meta_campaigns/meta_adsets/meta_ads.
 router.get('/campanhas', async (req, res) => {
   const { inicio, fim } = periodoOuPadrao(req);
@@ -334,7 +356,7 @@ router.patch('/campanhas/:nivel/:id/status', async (req, res) => {
   }
 });
 
-// Ranking de criativos — agrupa por nome do anuncio (na pratica, o nome do
+// Ranking de criativos â agrupa por nome do anuncio (na pratica, o nome do
 // criativo), somando entre contas/campanhas diferentes que usam o mesmo nome
 router.get('/criativos', async (req, res) => {
   const { inicio, fim } = periodoOuPadrao(req);
