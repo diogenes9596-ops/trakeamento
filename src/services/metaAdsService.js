@@ -225,7 +225,39 @@ async function sincronizarEstrutura(adAccountDbId, adAccountId, accessToken, moe
     );
   }
 
-  return { campanhas: campanhas.length, adsets: adsets.length, ads: ads.length };
+  // Remove do nosso banco campanhas/conjuntos/anuncios que sumiram do Gerenciador
+  // de Anuncios (apagados de verdade, nao so pausados -- pausados continuam
+  // vindo na resposta da API com status=PAUSED e por isso nao caem aqui).
+  // O ON DELETE CASCADE do schema (adset->campanha, anuncio->conjunto/campanha)
+  // cuida de limpar os filhos quando o pai some; os DELETE em anuncios e
+  // conjuntos abaixo cobrem o caso de algo apagado individualmente, com o
+  // pai ainda existindo. Gasto (ad_spend_daily) e vendas (sales) guardam o
+  // id so como texto, sem FK pra essas tabelas -- entao nada disso apaga
+  // historico de gasto ou atribuicao de venda, so a "ficha" da campanha/
+  // anuncio em si.
+  const idsCampanhas = campanhas.map(c => c.id);
+  const idsAdsets = adsets.map(a => a.id);
+  const idsAds = ads.map(a => a.id);
+
+  const delAds = await pool.query(
+    `DELETE FROM meta_ads WHERE ad_account_id = $1 AND NOT (id = ANY($2::varchar[]))`,
+    [adAccountDbId, idsAds]
+  );
+  const delAdsets = await pool.query(
+    `DELETE FROM meta_adsets WHERE ad_account_id = $1 AND NOT (id = ANY($2::varchar[]))`,
+    [adAccountDbId, idsAdsets]
+  );
+  const delCampanhas = await pool.query(
+    `DELETE FROM meta_campaigns WHERE ad_account_id = $1 AND NOT (id = ANY($2::varchar[]))`,
+    [adAccountDbId, idsCampanhas]
+  );
+
+  return {
+    campanhas: campanhas.length,
+    adsets: adsets.length,
+    ads: ads.length,
+    removidos: { campanhas: delCampanhas.rowCount, adsets: delAdsets.rowCount, ads: delAds.rowCount },
+  };
 }
 
 function centavosParaReais(valor, cotacao = 1) {
