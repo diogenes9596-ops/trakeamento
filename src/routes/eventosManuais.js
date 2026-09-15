@@ -14,8 +14,8 @@ function normalizarTelefoneBR(telefone) {
   return digitos;
 }
 
-// Lança uma venda manualmente (fora de qualquer webhook). Se o telefone bater
-// com um lead existente, a atribuição é herdada automaticamente.
+// LanÃ§a uma venda manualmente (fora de qualquer webhook). Se o telefone bater
+// com um lead existente, a atribuiÃ§Ã£o Ã© herdada automaticamente.
 router.post('/lancar-venda', async (req, res) => {
   const { telefone, email, nome, pais, estado, cidade, cep, produto_id, valor, data, pular_capi } = req.body;
 
@@ -162,9 +162,10 @@ router.post('/enviar-vendas-meta', async (req, res) => {
   const data = req.body?.data || new Date().toISOString().slice(0, 10);
   try {
     const vendas = await pool.query(
-      `SELECT id, id_externo, plataforma, telefone, valor, nome_cliente
-       FROM sales
-       WHERE status = 'aprovada' AND recebido_em BETWEEN $1 AND ($1::date + INTERVAL '1 day')`,
+      `SELECT s.id, s.id_externo, s.plataforma, s.telefone, s.valor, s.nome_cliente, l.ctwa_clid
+       FROM sales s
+       LEFT JOIN leads l ON l.id = s.lead_id
+       WHERE s.status = 'aprovada' AND s.recebido_em BETWEEN $1 AND ($1::date + INTERVAL '1 day')`,
       [data]
     );
 
@@ -177,6 +178,7 @@ router.post('/enviar-vendas-meta', async (req, res) => {
           telefone: v.telefone,
           valor: parseFloat(v.valor),
           eventId: `manual_${v.plataforma || 'skale'}_${v.id_externo || v.id}`,
+          ctwaClid: v.ctwa_clid || null,
         });
         enviados.push({ id: v.id, nome: v.nome_cliente, valor: v.valor });
       } catch (err) {
