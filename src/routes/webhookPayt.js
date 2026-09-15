@@ -2,7 +2,6 @@ const express = require('express');
 const pool = require('../db');
 const { obterSecret } = require('../services/webhookSecretsService');
 const { atribuirVendasPendentes } = require('../services/attributionService');
-const { enviarEventoCapi } = require('../services/metaCapiService');
 
 const router = express.Router();
 
@@ -85,7 +84,7 @@ router.post('/payt', async (req, res) => {
     const autorizado = await afiliadoAutorizado(emailAfiliado);
 
     if (!autorizado) {
-      console.log(`Venda da Payt ignorada — afiliado "${emailAfiliado}" nao esta na lista de atendentes.`);
+      console.log(`Venda da Payt ignorada â afiliado "${emailAfiliado}" nao esta na lista de atendentes.`);
       return;
     }
 
@@ -117,9 +116,10 @@ router.post('/payt', async (req, res) => {
     // Roda a atribuicao na hora pra essa venda especifica (nao precisa esperar o cron)
     await atribuirVendasPendentes();
 
-    if (status === 'aprovada') {
-      await enviarEventoCapi({ evento: 'Purchase', telefone, valor, eventId: `payt_${idExterno}` });
-    }
+    // Envio pro Meta CAPI DESLIGADO permanentemente a pedido do usuario --
+    // mesma regra ja aplicada ao webhook da Skale (ver webhookSkale.js).
+    // Envio manual pontual continua disponivel via
+    // /api/eventos-manuais/enviar-vendas-meta quando for pedido.
   } catch (err) {
     console.error('Erro ao processar webhook da Payt:', err);
   }
