@@ -186,6 +186,20 @@ async function main() {
   const { venda: d } = await esperarVenda('ven_TESTE04');
   checar('Antecipada aguardando = desconhecido', d && d.status === 'desconhecido', d && d.status);
 
+  // Bug real (ven_158205): a versao do webhook no ar de 09/09 17:27 a 11/09
+  // 20:11 procurava "Pago" em QUALQUER campo do payload e marcou como aprovada
+  // um pedido com todas as cobrancas recusadas. O status so pode vir de
+  // transaction.payment_status.
+  await postarSkale({
+    event: 'order_updated', transaction_id: 'ven_TESTE05',
+    status_comissao: 'Pago', // "Pago" na raiz: a busca cega achava esse antes de tudo
+    customer: { name: 'Cliente Recusado', phone: '11966660005' }, product: { name: '3 MESES' },
+    historico: [{ descricao: 'Parcela anterior', status: 'Pago' }], // e aninhado
+    transaction: { payment_status: 'Pagamento recusado', payment_method: 'Cartão de Crédito', total_price: 48300 },
+  });
+  const { venda: e } = await esperarVenda('ven_TESTE05');
+  checar('pagamento recusado com "Pago" em outro campo vira recusada, nunca aprovada', e && e.status === 'recusada', e && e.status);
+
   // === 4. Lancamento manual: id real, 409 em duplicata, sem envio ao Meta ===
   const manual = await api('/api/eventos-manuais/lancar-venda', {
     // data fixa: sem ela a venda cairia no dia em que o teste roda
