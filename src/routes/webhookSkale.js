@@ -2,6 +2,8 @@ const express = require('express');
 const pool = require('../db');
 const { obterSecret } = require('../services/webhookSecretsService');
 const { atribuirVendasPendentes } = require('../services/attributionService');
+const { normalizarTelefoneBR } = require('../utils/telefone');
+const { instanteDeBrasilia } = require('../utils/datas');
 
 const router = express.Router();
 
@@ -67,8 +69,10 @@ function extrairDataPagamento(body) {
     if (!isNaN(d.getTime())) return d;
   }
   if (t.paid_at) {
-    const d = new Date(String(t.paid_at).replace(' ', 'T'));
-    if (!isNaN(d.getTime())) return d;
+    // Sem fuso no texto, "2026-09-16 22:30:00" era lido no fuso do servidor
+    // (UTC no Railway) -- 3h de diferenca, podendo cair no dia seguinte.
+    const d = instanteDeBrasilia(t.paid_at);
+    if (d) return d;
   }
   return null;
 }
@@ -116,10 +120,7 @@ router.post('/skale', async (req, res) => {
     }
     const idExternoTexto = String(idExterno);
 
-    let telefone = String(body?.customer?.phone || '').replace(/\D/g, '');
-    if (telefone && !telefone.startsWith('55')) {
-      telefone = '55' + telefone;
-    }
+    const telefone = normalizarTelefoneBR(body?.customer?.phone);
 
     const email = body?.customer?.email || null;
     const nomeCliente = body?.customer?.name || null;

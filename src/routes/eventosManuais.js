@@ -2,17 +2,10 @@ const express = require('express');
 const pool = require('../db');
 const { encontrarLeadParaVenda, atribuirVendasPendentes } = require('../services/attributionService');
 const { enviarEventoCapi } = require('../services/metaCapiService');
+const { normalizarTelefoneBR } = require('../utils/telefone');
+const { hojeEmBrasilia } = require('../utils/datas');
 
 const router = express.Router();
-
-function normalizarTelefoneBR(telefone) {
-  if (!telefone) return null;
-  let digitos = telefone.replace(/\D/g, '');
-  if (digitos && !digitos.startsWith('55')) {
-    digitos = '55' + digitos;
-  }
-  return digitos;
-}
 
 // LanÃ§a uma venda manualmente (fora de qualquer webhook). Se o telefone bater
 // com um lead existente, a atribuiÃ§Ã£o Ã© herdada automaticamente.
@@ -21,6 +14,9 @@ router.post('/lancar-venda', async (req, res) => {
 
   if (!telefone && !email) {
     return res.status(400).json({ erro: 'Informe pelo menos telefone ou email' });
+  }
+  if (data && !dataValida(data)) {
+    return res.status(400).json({ erro: 'Data invalida, use AAAA-MM-DD' });
   }
 
   try {
@@ -52,7 +48,11 @@ router.post('/lancar-venda', async (req, res) => {
     // anteriores (ex: importando um historico da Skale) com a data real da
     // venda, em vez de sempre cair em "agora". Sem isso, um lote de vendas
     // de dias diferentes ficaria todo empilhado no dia do lancamento.
-    const recebidoEm = data ? `${data}T12:00:00Z` : null;
+    // Sem hora, a venda vai pro FIM do dia em Brasilia (23:59:59 -03:00): o
+    // lead tem que vir antes da venda pra atribuir, e o valor antigo
+    // (T12:00:00Z = 09:00 em Brasilia) perdia todo lead chegado depois das 9h
+    // do mesmo dia.
+    const recebidoEm = data ? `${data}T23:59:59-03:00` : null;
 
     if (!idSkale) {
       console.warn(
@@ -186,12 +186,6 @@ router.delete('/produtos/:id', async (req, res) => {
 
 function dataValida(data) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(data || ''));
-}
-
-// "Hoje" no horario de Brasilia -- toISOString() devolve UTC e, depois das
-// 21h, ja seria o dia seguinte.
-function hojeEmBrasilia() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 }
 
 // Vendas aprovadas de um dia do pagamento (o pool ja roda em

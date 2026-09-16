@@ -1,6 +1,7 @@
 const axios = require('axios');
 const pool = require('../db');
 const { obterCotacaoParaData } = require('./fxService');
+const { hojeEmBrasilia, diasAtrasEmBrasilia } = require('../utils/datas');
 
 const GRAPH_VERSION = 'v21.0';
 const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -137,11 +138,9 @@ async function salvarGastoDiario(adAccountDbId, moedaOriginal, registros) {
 async function sincronizarTodasContas(diasParaTras = 30) {
   const contas = await pool.query('SELECT * FROM ad_accounts WHERE ativo = TRUE');
 
-  const hoje = new Date();
-  const dataFim = hoje.toISOString().slice(0, 10);
-  const inicio = new Date(hoje);
-  inicio.setDate(inicio.getDate() - diasParaTras);
-  const dataInicio = inicio.toISOString().slice(0, 10);
+  // Datas no horario de Brasilia -- o servidor roda em UTC
+  const dataFim = hojeEmBrasilia();
+  const dataInicio = diasAtrasEmBrasilia(diasParaTras);
 
   const relatorio = [];
 
@@ -174,7 +173,7 @@ async function sincronizarEstrutura(adAccountDbId, adAccountId, accessToken, moe
   // -- toISOString() sempre devolve UTC, o que a noite (depois das 21h) ja
   // mostra o dia seguinte e faz o sistema nao achar a cotacao cadastrada pra
   // hoje, caindo no fallback por engano.
-  const hojeBrasil = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+  const hojeBrasil = hojeEmBrasilia();
   const cotacao = moedaOriginal && moedaOriginal !== 'BRL'
     ? await obterCotacaoParaData(hojeBrasil)
     : 1;

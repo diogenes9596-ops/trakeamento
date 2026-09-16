@@ -2,14 +2,15 @@ const express = require('express');
 const pool = require('../db');
 const { sincronizarTodasContas, atualizarStatus } = require('../services/metaAdsService');
 const { atribuirVendasPendentes } = require('../services/attributionService');
+const { hojeEmBrasilia, diasAtrasEmBrasilia } = require('../utils/datas');
 
 const router = express.Router();
 
 // Visao principal: por anuncio/criativo, gasto no periodo x vendas atribuidas
 router.get('/resumo-por-anuncio', async (req, res) => {
   const { data_inicio, data_fim } = req.query;
-  const inicio = data_inicio || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-  const fim = data_fim || new Date().toISOString().slice(0, 10);
+  const inicio = data_inicio || diasAtrasEmBrasilia(7);
+  const fim = data_fim || hojeEmBrasilia();
 
   try {
     const result = await pool.query(
@@ -69,8 +70,8 @@ router.get('/resumo-por-anuncio', async (req, res) => {
 // Totais gerais do periodo (cards do topo do dashboard)
 router.get('/totais', async (req, res) => {
   const { data_inicio, data_fim } = req.query;
-  const inicio = data_inicio || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-  const fim = data_fim || new Date().toISOString().slice(0, 10);
+  const inicio = data_inicio || diasAtrasEmBrasilia(7);
+  const fim = data_fim || hojeEmBrasilia();
 
   try {
     const gasto = await pool.query(
@@ -185,8 +186,8 @@ router.post('/sincronizar-agora', async (req, res) => {
 });
 
 function periodoOuPadrao(req) {
-  const inicio = req.query.data_inicio || new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-  const fim = req.query.data_fim || new Date().toISOString().slice(0, 10);
+  const inicio = req.query.data_inicio || diasAtrasEmBrasilia(7);
+  const fim = req.query.data_fim || hojeEmBrasilia();
   return { inicio, fim };
 }
 
