@@ -17,8 +17,9 @@ a plataforma de tracking de terceiros que você usava. Cobre:
    janela de tempo configurável, e credita o anúncio certo, sem depender do
    Gerenciador de Anúncios.
 6. **Meta CAPI (Conversions API)** — **nenhuma integração envia evento
-   automático** (nem Skale, nem Payt, nem DataCrazy). O envio de Purchase pro
-   Meta é sempre manual, pela página Eventos Manuais. Veja a seção 7.
+   automático** (nem Skale, nem Payt, nem DataCrazy), e lançar venda manual
+   também não envia. O único envio é manual, por chamada de API — hoje não há
+   botão pra isso no painel. Veja a seção 7.
 7. **Cotação do dólar** — converte o gasto de contas em USD pra BRL, com a
    cotação travada por dia.
 8. **Dashboard**: Overview, Campanhas (Campanhas → Conjuntos → Anúncios),
@@ -124,6 +125,20 @@ Cole no painel da Skale a URL que aparece em Configurações > Webhooks (já vem
 com o `?token=`). A autenticação aceita o token na query string ou o header
 `x-skale-secret`.
 
+A Skale manda um evento `order_updated` a cada mudança de status do pedido.
+Campos lidos (confirmados com payloads reais):
+
+| Campo no payload | Vira |
+|---|---|
+| `transaction_id` (formato `ven_XXXXXX`) | ID do pedido — chave contra duplicata |
+| `customer.phone` / `customer.name` / `customer.email` | telefone / nome / e-mail |
+| `product.name` | produto (nome do kit, ex: "6 MESES") |
+| `transaction.total_price` | valor — **sempre em centavos**, dividido por 100 |
+
+O valor é o bruto do pedido, sem descontar taxa ou comissão — a mesma régua do
+"Faturamento" da própria Skale. Se um evento chegar sem `total_price` (ex:
+atualização tardia de rastreio), a venda **mantém o valor que já tinha**.
+
 ### 4.4. Payt (vendas — secundária)
 
 No painel da Payt, em Ofertas & Produtos > Postbacks, cadastre a URL que
@@ -165,9 +180,10 @@ opção não muda nada por enquanto: o que sai daqui é sempre Purchase.
   indicação, etc.) e não é tentada de novo.
 - Roda a cada webhook de venda recebido e, de novo, a cada 30 minutos. O botão
   **"🔄 Sincronizar agora"** do painel roda o mesmo ciclo na hora.
-- Em **Eventos Manuais** existe uma opção de **reatribuir** um período: ela
-  zera a atribuição daquelas vendas e roda tudo outra vez (útil depois de
-  importar leads históricos).
+- Existe uma rota de API pra **reatribuir** um período
+  (`POST /api/eventos-manuais/reatribuir`, sem botão no painel): ela zera a
+  atribuição daquelas vendas e roda tudo outra vez (útil depois de importar
+  leads históricos).
 
 ---
 
@@ -207,18 +223,16 @@ Todas as datas desse fluxo são ancoradas em `-03:00` (Brasília).
 automático entre 15/09 e 16/09/2026 e foi desligada de novo, voltando à regra
 original. Nenhuma origem envia evento de **Lead**.
 
-Os envios, todos manuais, ficam em **Eventos Manuais**:
+**Lançar venda manual também não envia nada ao Meta** (desde 16/09/2026) — só
+registra a venda no painel.
 
-- `lançar venda` — venda avulsa; **dispara Purchase** na hora, com o telefone
-  hasheado (SHA-256). A API aceita `pular_capi` pra não enviar (o certo ao
-  importar histórico, pra não duplicar conversão antiga com a data de hoje),
-  mas o formulário do painel não tem essa opção: venda lançada por ele sempre
-  envia. Com o ID do pedido na Skale, o `event_id` é `skale_<id do pedido>`.
-- `enviar vendas ao Meta` — backfill: envia o Purchase de todas as vendas
-  aprovadas de uma data, com o `ctwa_clid` quando a atribuição achou o lead
-  (identificador do clique no anúncio que gerou a conversa no WhatsApp — sem
-  ele, o Meta só tem o telefone pra casar a conversão com o anúncio). Cuidado:
-  reenviar uma data que já foi enviada conta as conversões duas vezes.
+O único envio existente é o **backfill**, `POST /api/eventos-manuais/enviar-vendas-meta`
+— **só por chamada de API, sem botão no painel**. Ele envia o Purchase de todas
+as vendas aprovadas de uma data, com o telefone hasheado (SHA-256) e o
+`ctwa_clid` quando a atribuição achou o lead (identificador do clique no anúncio
+que gerou a conversa no WhatsApp — sem ele, o Meta só tem o telefone pra casar
+a conversão com o anúncio). Cuidado: reenviar uma data que já foi enviada conta
+as conversões duas vezes.
 
 **Todo envio fica registrado na aba Eventos**, com payload e resposta (ou erro)
 — é lá que você confere se algo saiu ou falhou.
@@ -254,8 +268,9 @@ Os envios, todos manuais, ficam em **Eventos Manuais**:
 - **Vendas** — lista com filtro por origem e por status; **Agendamento é um
   desses filtros, dentro da própria página de Vendas**, não uma página à parte.
 - **Eventos** — log de tudo que foi enviado ao Meta via CAPI.
-- **Eventos Manuais** — lançamento manual de venda e de lead, reatribuição de
-  período, backfill de Purchase e cadastro dos produtos do dropdown.
+- **Eventos Manuais** — lançamento manual de venda (sem envio ao Meta) e
+  cadastro dos produtos do dropdown. Lançar lead, reatribuir período e enviar
+  vendas ao Meta existem só como rotas de API, sem tela.
 - **Configurações** — contas de anúncio, pixels, atendentes, webhooks, cotação
   e marca.
 

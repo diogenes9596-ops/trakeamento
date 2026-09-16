@@ -13,7 +13,7 @@ O que o sistema faz, em ordem:
 2. Recebe **vendas** via webhook da Skale Tracking (principal) e da Payt (secundária, hoje sem tráfego).
 3. **Atribui**: cruza telefone da venda com telefone do lead recente pra creditar o anúncio certo, sem depender do Gerenciador de Anúncios do Meta.
 4. Puxa **gasto** direto da Graph API do Meta (não depende de nenhum evento de conversão pra saber quanto foi gasto).
-5. Envia **Purchase ao Meta CAPI só manualmente** (página Eventos Manuais), com `ctwa_clid` quando a atribuição achou o lead. Nenhum webhook envia automático.
+5. Envia **Purchase ao Meta CAPI só manualmente** (backfill por API), com `ctwa_clid` quando a atribuição achou o lead. Nada envia automático — nem webhook, nem lançamento manual de venda.
 6. Mostra tudo num dashboard: gasto × faturamento × ROAS × CPA, por anúncio/conjunto/campanha/criativo.
 
 ```
@@ -105,11 +105,12 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **Contas de anúncio**: cadastro individual ou importação em lote ("Importar BM" — cola token + lista de IDs, sistema resolve nome/moeda).
 - **Motor de atribuição**: compara telefone por últimos 9 E últimos 8 dígitos (celular brasileiro às vezes vem com/sem o "9"), dentro de uma janela de `JANELA_ATRIBUICAO_HORAS` (720h = 30 dias) anterior à venda. Com mais de um lead na janela, vale o mais recente.
 - **Classificação de venda da Skale**: ver Regras de negócio.
-- **Meta CAPI**: só manual, nas três integrações — `lancar-venda` (dispara Purchase, exceto com `pular_capi`, que o formulário do painel não oferece) e `enviar-vendas-meta` (backfill por data, com `ctwa_clid`). Nenhum webhook envia.
+- **Campos do webhook da Skale** (evento `order_updated`, catch-all a cada mudança de status; confirmados com payloads reais em 16/09/2026): `transaction_id` (`ven_XXXXXX`), `customer.phone`, `customer.name`, `customer.email`, `product.name` (nome do kit), `transaction.total_price` — **sempre em centavos**, dividido por 100 sempre; faturamento = esse valor bruto, sem descontar taxa/comissão. Evento sem `total_price` **não altera** o valor já salvo.
+- **Meta CAPI**: só manual. A única rota que envia é `enviar-vendas-meta` (backfill por data, com `ctwa_clid`), **só por API — não há botão no painel**. Nenhum webhook envia, e `lancar-venda` também não (desde 16/09/2026).
 - **Limpeza automática de campanhas apagadas**: cron remove do banco campanha/conjunto/anúncio que sumiu de verdade do Meta (não conta pausado).
 - **Cotação do dólar fixa por dia**: ver Regras de negócio.
-- **Lançamento manual** (`/api/eventos-manuais/lancar-venda`, `/lancar-lead`): herda atribuição automaticamente se o telefone bater.
-- **Envio manual ao CAPI** (`/api/eventos-manuais/enviar-vendas-meta`): backfill pontual de Purchase por data.
+- **Lançamento manual** (`/api/eventos-manuais/lancar-venda`, `/lancar-lead`): herda atribuição automaticamente se o telefone bater. Não envia nada ao Meta. No painel só existe o formulário de venda; `lancar-lead` e `reatribuir` são só API.
+- **Envio manual ao CAPI** (`/api/eventos-manuais/enviar-vendas-meta`): backfill pontual de Purchase por data — só API, sem botão no painel.
 - **Sincronização sob demanda**: botão "🔄 Sincronizar agora" no painel = `POST /api/dashboard/sincronizar-agora` (mesmo ciclo do cron, na hora).
 - **Páginas do painel**: Overview, Campanhas (com drill-down Campanha→Conjunto→Anúncio), Criativos, Leads, Vendas, Eventos (log CAPI), Eventos Manuais, Configurações. **Agendamentos não é página**: é um dos filtros de status dentro de Vendas (`src/public/vendas.html`), junto com Aprovada, Pendente, Recusada, Cancelada e Reembolsada.
 
@@ -123,7 +124,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
    - qualquer pedido com `payment_status="Pago"` → `aprovada`
    - Antecipada aguardando confirmação → `desconhecido` (aba "Pendente", não conta como venda nem agendamento)
    - recusado → `recusada`; cancelado/estornado/chargeback → `cancelada`
-3. **Meta CAPI: NUNCA automático, em nenhuma integração** (Skale, Payt, DataCrazy). A Skale ficou automática só de 15/09 a 16/09/2026 e foi desligada de novo a pedido do usuário, voltando à regra original. O envio ao Meta é sempre manual (página Eventos Manuais); a aba Eventos e o cadastro de pixels continuam existindo. Não religue o automático em nenhuma das três sem pedido explícito (ver Armadilhas).
+3. **Meta CAPI: NUNCA automático, em nenhuma integração** (Skale, Payt, DataCrazy). A Skale ficou automática só de 15/09 a 16/09/2026 e foi desligada de novo a pedido do usuário, voltando à regra original. Lançar venda manual também não envia (desde 16/09/2026): **nada dispara pro Meta como efeito colateral de outra ação**. O único envio é o backfill manual `enviar-vendas-meta`; a aba Eventos e o cadastro de pixels continuam existindo. Não religue envio automático em lugar nenhum sem pedido explícito (ver Armadilhas).
 4. **Cotação do dólar fixa por dia, nunca recalculada depois de definida.** Cada dia trava seu próprio valor na primeira vez que é consultado.
 5. **Campanha/conjunto/anúncio apagado de verdade no Meta some do painel automaticamente; pausado continua aparecendo.**
 6. **Vendas de afiliado da Payt fora da whitelist de `atendentes` são ignoradas** pelo webhook.
