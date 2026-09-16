@@ -105,6 +105,21 @@ document.getElementById('busca').addEventListener('input', () => {
 // cor no painel.
 const badgeStatus = { aprovada: 'bom', recusada: 'ruim', cancelada: 'ruim', reembolsada: 'ruim', desconhecido: 'neutro', aguardando: 'neutro', agendamento: 'alerta' };
 
+function escaparHtml(texto) {
+  return String(texto ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Coluna Anuncio. Anuncio apagado no Meta sai da estrutura sincronizada
+// (meta_ads), entao o nome some -- mas a venda continua atribuida (ad_id).
+// Nesse caso mostra o ID, pra atribuicao nao parecer vazia.
+function celulaAnuncio(v) {
+  if (v.ad_name) return escaparHtml(v.ad_name);
+  if (v.ad_id) {
+    return `<span style="font-family:monospace; font-size:11px;" title="Anúncio não encontrado na estrutura do Meta (provavelmente apagado)">ID ${escaparHtml(v.ad_id)}</span>`;
+  }
+  return '--';
+}
+
 async function carregar() {
   const busca = document.getElementById('busca').value;
   const inicio = document.getElementById('dataInicio').value;
@@ -144,7 +159,7 @@ async function carregar() {
       <td class="conta-cel">${v.conta_nome || '--'}${contaMeta ? `<div class="id-conta">${contaMeta}</div>` : ''}</td>
       <td>${v.campaign_name ? `<span class="link-meta">${v.campaign_name}</span>` : '--'}</td>
       <td>${v.adset_name || '--'}</td>
-      <td>${v.ad_name || '--'}</td>
+      <td>${celulaAnuncio(v)}</td>
       <td>${criativoCel}</td>
       <td>${formatarData(v.recebido_em)}</td>
       <td><button class="btn-excluir" onclick="excluirVenda(${v.id})" title="Excluir">🗑</button></td>
