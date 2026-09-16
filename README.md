@@ -139,6 +139,15 @@ O valor é o bruto do pedido, sem descontar taxa ou comissão — a mesma régua
 "Faturamento" da própria Skale. Se um evento chegar sem `total_price` (ex:
 atualização tardia de rastreio), a venda **mantém o valor que já tinha**.
 
+**Nenhuma venda se perde no caminho.** Todo evento da Skale é gravado no banco
+(tabela `webhooks_recebidos`) **antes** de o sistema responder "ok" — antes, a
+resposta saía primeiro e, se o banco falhasse logo em seguida, a Skale achava que
+tinha entregado e a venda sumia. Se o evento não virar venda (sem
+`transaction_id`, erro ao gravar…), ele aparece em **Configurações > Webhooks**,
+na lista "Erros no processamento", com o motivo — e o payload completo continua
+guardado no banco. Se nem o evento puder ser gravado, o sistema tenta gravar a
+venda antes de responder e, se também não conseguir, responde erro pra Skale.
+
 ### 4.4. Payt (vendas — secundária)
 
 No painel da Payt, em Ofertas & Produtos > Postbacks, cadastre a URL que
@@ -291,8 +300,9 @@ Por baixo, são as rotas `GET /api/eventos-manuais/vendas-para-meta?data=AAAA-MM
 - **Eventos Manuais** — três abas: lançar venda manual (sem envio ao Meta),
   cadastro dos produtos do dropdown e **Enviar ao Meta** (seção 7). Lançar lead
   e reatribuir período existem só como rotas de API, sem tela.
-- **Configurações** — contas de anúncio, pixels, atendentes, webhooks, cotação
-  e marca.
+- **Configurações** — contas de anúncio, pixels, atendentes, webhooks (URLs,
+  secrets e a lista de eventos que deram erro no processamento), cotação e
+  marca.
 
 ---
 

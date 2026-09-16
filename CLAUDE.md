@@ -62,6 +62,7 @@ src/
     metaCapiService.js      # envio de eventos Lead/Purchase pro Meta CAPI
     fxService.js            # cotação do dólar (cache por dia, ver "Armadilhas")
     webhookSecretsService.js
+    webhooksRecebidosService.js  # registro de todo evento de webhook, gravado ANTES de responder "ok"
   utils/
     telefone.js            # normalizarTelefoneBR: só dígitos + DDI 55 (decide pelo tamanho, ver Armadilhas)
     datas.js               # hojeEmBrasilia, diasAtrasEmBrasilia, instanteDeBrasilia -- toda data de calendário passa por aqui
@@ -97,6 +98,7 @@ test/
 | `pixels` | pixels do Meta pra CAPI; `is_default=TRUE` é o que recebe os eventos |
 | `sales` | **tabela central** — plataforma, `id_externo`, status, telefone, valor, `ad_id`, `lead_id`, `atribuido_em`, `recebido_em`, `payload_bruto`. `UNIQUE(plataforma, id_externo)` |
 | `eventos_capi` | log de cada envio ao Meta CAPI (payload + resposta/erro) |
+| `webhooks_recebidos` | todo evento que chega no webhook da Skale, gravado **antes** de responder "ok": `payload`, `status` (`recebido` → `processado` \| `erro`), `erro`, `id_externo`. Criada também no boot do servidor (ver Armadilhas) |
 | `meta_campaigns` / `meta_adsets` / `meta_ads` | espelho da estrutura do Meta, `ON DELETE CASCADE` entre os três |
 | `produtos_manuais` | produtos pro dropdown de lançamento manual |
 | `branding` | white-label (nunca customizado de fato, mas o recurso existe) |
@@ -118,6 +120,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **Cotação do dólar fixa por dia**: ver Regras de negócio.
 - **Lançamento manual** (`/api/eventos-manuais/lancar-venda`, `/lancar-lead`): herda atribuição automaticamente se o telefone bater. Venda só com data (sem hora) vai pra **23:59:59 -03:00** daquele dia, pra atribuir qualquer lead chegado no mesmo dia; data fora do formato AAAA-MM-DD responde 400. Não envia nada ao Meta. No painel só existe o formulário de venda; `lancar-lead` e `reatribuir` são só API.
 - **Envio manual ao CAPI** — aba "Enviar ao Meta" em Eventos Manuais: escolhe o dia do pagamento, pré-visualiza as vendas aprovadas (`GET /api/eventos-manuais/vendas-para-meta`, marca quem tem `ctwa_clid` e quem **já foi aceita pelo Meta antes**, via `event_id` em `eventos_capi`), confirma e envia (`POST /enviar-vendas-meta`). **Venda já aceita pelo Meta é pulada automaticamente, sem aviso** (decisão do usuário, 16/09/2026). O envio devolve enviadas × puladas × falhas com o motivo real — `enviarEventoCapi` retorna `{ ok, erro }`.
+- **Nenhuma venda da Skale se perde entre o "ok" e a gravação** (16/09/2026): o webhook grava o payload em `webhooks_recebidos` antes de responder "ok" e depois marca `processado` ou `erro`. Se nem o payload puder ser gravado, processa a venda antes de responder e só diz "ok" se ela foi gravada — senão responde 500. Eventos com erro, ou presos em `recebido` por mais de 5 minutos, aparecem em **Configurações > Webhooks** (`GET /api/webhooks-config/erros`). Alerta por e-mail/WhatsApp: não, por decisão do usuário.
 - **Sincronização sob demanda**: botão "🔄 Sincronizar agora" no painel = `POST /api/dashboard/sincronizar-agora` (mesmo ciclo do cron, na hora).
 - **Páginas do painel**: Overview, Campanhas (com drill-down Campanha→Conjunto→Anúncio), Criativos, Leads, Vendas, Eventos (log CAPI), Eventos Manuais, Configurações. **Agendamentos não é página**: é um dos filtros de status dentro de Vendas (`src/public/vendas.html`), junto com Aprovada, Pendente, Recusada, Cancelada e Reembolsada.
 
@@ -161,6 +164,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **Telefone brasileiro**: sempre comparar por últimos 9 E últimos 8 dígitos. Uma fonte pode mandar com o "9" do celular, outra sem.
 - **DDI 55 e DDD 55 (Rio Grande do Sul) são o mesmo "55"**: a regra "se não começa com 55, coloca 55" gravava celular do RS sem DDI. Pra gravar telefone, use sempre `normalizarTelefoneBR` (`src/utils/telefone.js`), que decide pelo tamanho (10/11 dígitos = sem DDI). Vendas gravadas antes de 16/09/2026 podem ter telefone do RS sem DDI — a atribuição não sofre (compara os últimos dígitos), só o hash enviado ao Meta.
 - **Datas sem hora exata**: nunca faça fallback pra meia-noite sem `-03:00` explícito — isso já quebrou tanto a atribuição (lead parecia vir "depois" da venda) quanto a data de exibição no painel (venda caindo no dia errado dependendo do fuso da comparação).
+- **O deploy não aplica o `schema.sql`.** O Railway só roda `node src/server.js`; `npm run migrate` não acontece sozinho. Tabela nova que o código usa precisa ser garantida no boot do servidor (`CREATE TABLE IF NOT EXISTS`, como `garantirTabelaWebhooksRecebidos`), além de entrar no `schema.sql` — senão o código novo quebra em produção no primeiro uso.
 - **O servidor de produção roda em UTC.** `toISOString()` dá a data em UTC (depois das 21h de Brasília já é amanhã) e texto de data/hora sem fuso é lido em UTC. Use `src/utils/datas.js` pra "hoje" e pra interpretar data/hora; o teste de aceite roda o servidor com `TZ=UTC` justamente pra pegar isso. No SQL o fuso já está certo: o pool fixa `America/Sao_Paulo` (`src/db.js`).
 - **`fx_rates` pode ficar vazia mesmo com a função de salvar existindo** — `salvarCotacaoDoDia` só é chamada pela rota manual `/api/fx/dia`; a função de leitura (`obterCotacaoParaData`) precisa *também* chamar o save após buscar ao vivo, senão a "cotação do dia" nunca fica fixa de verdade (bug real, já corrigido, mas fique atento se reaparecer numa refatoração).
 - **CAPI automático "vazando"**: hoje está desligado nas três integrações (Skale, Payt, DataCrazy). Se um dia alguém ligar ou desligar numa delas, confira as outras duas — elas não sincronizam sozinhas, e já houve envio automático continuando num webhook que se achava desligado.
