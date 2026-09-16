@@ -156,6 +156,11 @@ async function main() {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   })).status;
 
+  const tokenDatacrazy = (await pool.query(`SELECT secret FROM webhook_secrets WHERE servico = 'datacrazy'`)).rows[0]?.secret;
+  const postarDatacrazy = async payload => (await fetch(`${BASE}/webhook/datacrazy`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-datacrazy-secret': tokenDatacrazy }, body: JSON.stringify(payload),
+  })).status;
+
   // Tabela ou coluna inexistente (codigo antigo) conta como "nao achou", pra
   // falhar so a verificacao em vez de derrubar o teste inteiro.
   async function primeiraLinha(sql, params = []) {
@@ -306,10 +311,29 @@ async function main() {
     `SELECT status, erro, id_externo FROM webhooks_recebidos WHERE servico = 'skale' AND payload->>'transaction_id' = $1`, [idGigante], r => r.status !== 'recebido');
   checar('falha do banco ao gravar a venda fica registrada como erro',
     falhaBanco?.status === 'erro' && !!falhaBanco?.erro && falhaBanco?.id_externo?.length === 255, falhaBanco && `${falhaBanco.status}: ${falhaBanco.erro}`);
+  // DataCrazy: mesmo desenho -- lead perdido e venda futura sem atribuicao
+  checar('webhook do DataCrazy responde 200',
+    (await postarDatacrazy({ phone: '5511933330010', ctwa_clid: 'CLID_DC', source_id: 'AD_DC' })) === 200);
+  const registroLead = await primeiraLinha(
+    `SELECT id FROM webhooks_recebidos WHERE servico = 'datacrazy' AND payload->>'ctwa_clid' = 'CLID_DC'`);
+  checar('DataCrazy: payload gravado antes de responder "ok"', registroLead);
+  const leadProcessado = registroLead && await esperarLinha(
+    `SELECT status, id_externo FROM webhooks_recebidos WHERE id = $1`, [registroLead.id], r => r.status !== 'recebido');
+  const leadGravado = await primeiraLinha(`SELECT id, ad_id FROM leads WHERE ctwa_clid = 'CLID_DC'`);
+  checar('DataCrazy: lead gravado e evento marcado como processado',
+    leadGravado?.ad_id === 'AD_DC' && leadProcessado?.status === 'processado' && leadProcessado?.id_externo === `lead_${leadGravado?.id}`,
+    leadProcessado && `${leadProcessado.status} / ${leadProcessado.id_externo}`);
+  await postarDatacrazy({ ctwa_clid: 'CLID_SEM_FONE' });
+  const leadSemFone = await esperarLinha(
+    `SELECT status, erro FROM webhooks_recebidos WHERE servico = 'datacrazy' AND payload->>'ctwa_clid' = 'CLID_SEM_FONE'`, [], r => r.status !== 'recebido');
+  checar('DataCrazy: evento sem phone fica registrado como erro (antes sumia)',
+    leadSemFone?.status === 'erro' && /phone/.test(leadSemFone?.erro || ''), leadSemFone && `${leadSemFone.status}: ${leadSemFone.erro}`);
+
   const listaErros = await (await api('/api/webhooks-config/erros')).json().catch(() => null);
-  checar('as duas falhas aparecem no log de erros do painel (e o evento processado nao)',
-    Array.isArray(listaErros) && listaErros.length === 2 && listaErros.every(e => e.servico === 'skale' && e.status === 'erro'),
-    Array.isArray(listaErros) ? `${listaErros.length} item(ns)` : JSON.stringify(listaErros));
+  checar('as falhas aparecem no log de erros do painel (2 da Skale, 1 do DataCrazy; eventos processados nao)',
+    Array.isArray(listaErros) && listaErros.length === 3 && listaErros.every(e => e.status === 'erro')
+      && listaErros.filter(e => e.servico === 'skale').length === 2 && listaErros.filter(e => e.servico === 'datacrazy').length === 1,
+    Array.isArray(listaErros) ? listaErros.map(e => e.servico).join(', ') : JSON.stringify(listaErros));
 
   // === 4. Lancamento manual: id real, 409 em duplicata, sem envio ao Meta ===
   const manual = await api('/api/eventos-manuais/lancar-venda', {
@@ -401,6 +425,13 @@ async function main() {
     statusSemTabela === 200 && vendaSemTabela?.status === 'aprovada', `${statusSemTabela}, venda ${vendaSemTabela ? vendaSemTabela.status : 'NAO gravada'}`);
   const statusSemNada = await postarSkale({ event: 'order_updated', transaction: { payment_status: 'Pago' } });
   checar('sem gravar o payload nem a venda: responde 500, a Skale fica sabendo', statusSemNada === 500, statusSemNada);
+
+  const statusLeadSemTabela = await postarDatacrazy({ phone: '5511955550011', ctwa_clid: 'CLID_SEM_TABELA', source_id: 'AD_DC2' });
+  const leadSemTabela = await primeiraLinha(`SELECT id FROM leads WHERE ctwa_clid = 'CLID_SEM_TABELA'`); // logo depois da resposta
+  checar('DataCrazy sem gravar o payload: so responde "ok" depois de gravar o lead',
+    statusLeadSemTabela === 200 && leadSemTabela, `${statusLeadSemTabela}, lead ${leadSemTabela ? 'gravado' : 'NAO gravado'}`);
+  const statusLeadSemNada = await postarDatacrazy({ ctwa_clid: 'CLID_SEM_NADA' });
+  checar('DataCrazy sem gravar o payload nem o lead: responde 500', statusLeadSemNada === 500, statusLeadSemNada);
 }
 
 main()
