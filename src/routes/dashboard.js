@@ -145,14 +145,26 @@ router.get('/gateway', async (req, res) => {
 // atribuicao encontrarem um lead agora que a janela ficou maior.
 router.post('/reprocessar-atribuicao', async (req, res) => {
   const { data_inicio, data_fim } = req.body || {};
+  // As datas vao como parametro ($1/$2), nunca coladas no SQL: a versao
+  // anterior montava "BETWEEN '<data_inicio>' ..." direto do corpo da
+  // requisicao -- injecao de SQL num UPDATE. Formato validado antes do banco.
+  const comPeriodo = data_inicio && data_fim;
+  const formatoData = /^\d{4}-\d{2}-\d{2}$/;
+  if (comPeriodo && (!formatoData.test(String(data_inicio)) || !formatoData.test(String(data_fim)))) {
+    return res.status(400).json({ erro: 'Datas invalidas, use AAAA-MM-DD' });
+  }
   try {
-    const filtroData = data_inicio && data_fim
-      ? `AND recebido_em BETWEEN '${data_inicio}' AND ('${data_fim}'::date + INTERVAL '1 day')`
-      : '';
-    const reset = await pool.query(
-      `UPDATE sales SET atribuido_em = NULL
-       WHERE status = 'aprovada' AND ad_id IS NULL ${filtroData}`
-    );
+    const reset = comPeriodo
+      ? await pool.query(
+          `UPDATE sales SET atribuido_em = NULL
+           WHERE status = 'aprovada' AND ad_id IS NULL
+             AND recebido_em >= $1::date AND recebido_em < $2::date + INTERVAL '1 day'`,
+          [data_inicio, data_fim]
+        )
+      : await pool.query(
+          `UPDATE sales SET atribuido_em = NULL
+           WHERE status = 'aprovada' AND ad_id IS NULL`
+        );
     const resultado = await atribuirVendasPendentes();
     res.json({ resetadas: reset.rowCount, ...resultado });
   } catch (err) {
