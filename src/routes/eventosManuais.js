@@ -17,7 +17,7 @@ function normalizarTelefoneBR(telefone) {
 // LanÃ§a uma venda manualmente (fora de qualquer webhook). Se o telefone bater
 // com um lead existente, a atribuiÃ§Ã£o Ã© herdada automaticamente.
 router.post('/lancar-venda', async (req, res) => {
-  const { id_externo, telefone, email, nome, pais, estado, cidade, cep, produto_id, valor, data, pular_capi } = req.body;
+  const { id_externo, telefone, email, nome, pais, estado, cidade, cep, produto_id, valor, data } = req.body;
 
   if (!telefone && !email) {
     return res.status(400).json({ erro: 'Informe pelo menos telefone ou email' });
@@ -92,18 +92,11 @@ router.post('/lancar-venda', async (req, res) => {
       }
     }
 
-    // "pular_capi": true evita mandar o evento de Purchase pro Meta -- essencial
-    // ao importar historico (vendas antigas), ja que a compra original
-    // provavelmente ja disparou o evento de verdade na epoca; reenviar aqui
-    // so duplicaria a conversao no Gerenciador de Anuncios com a data de hoje.
-    if (!pular_capi) {
-      // Com id da Skale, usa exatamente o mesmo event_id que o webhook dela
-      // usaria pra esse pedido (skale_<id>) -- assim, se o webhook chegar
-      // depois e disparar o Purchase dele, o Meta deduplica os dois em vez
-      // de contar a conversao duas vezes.
-      const eventId = plataforma === 'skale' ? `skale_${idExterno}` : idExterno;
-      await enviarEventoCapi({ evento: 'Purchase', telefone: telefoneNormalizado, valor: valorFinal, eventId });
-    }
+    // Lancamento manual NAO envia nada pro Meta (decisao do usuario em
+    // 16/09/2026: nada dispara pro Meta sozinho, nem como efeito colateral de
+    // registrar uma venda). Antes disparava Purchase a nao ser que viesse
+    // pular_capi -- que o formulario do painel nem oferecia. Envio ao CAPI
+    // agora so pela rota /enviar-vendas-meta, abaixo.
 
     res.status(201).json(venda);
   } catch (err) {
