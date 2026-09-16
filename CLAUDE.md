@@ -13,7 +13,7 @@ O que o sistema faz, em ordem:
 2. Recebe **vendas** via webhook da Skale Tracking (principal) e da Payt (secundária, hoje sem tráfego).
 3. **Atribui**: cruza telefone da venda com telefone do lead recente pra creditar o anúncio certo, sem depender do Gerenciador de Anúncios do Meta.
 4. Puxa **gasto** direto da Graph API do Meta (não depende de nenhum evento de conversão pra saber quanto foi gasto).
-5. Envia **Purchase ao Meta CAPI só manualmente** (backfill por API), com `ctwa_clid` quando a atribuição achou o lead. Nada envia automático — nem webhook, nem lançamento manual de venda.
+5. Envia **Purchase ao Meta CAPI só manualmente** (botão "Enviar ao Meta" em Eventos Manuais), com `ctwa_clid` quando a atribuição achou o lead. Nada envia automático — nem webhook, nem lançamento manual de venda.
 6. Mostra tudo num dashboard: gasto × faturamento × ROAS × CPA, por anúncio/conjunto/campanha/criativo.
 
 ```
@@ -71,6 +71,10 @@ src/
     adAccounts.js, atendentes.js, auth.js, branding.js, fx.js, pixels.js, webhooksConfig.js
 sql/
   schema.sql                # schema completo, idempotente (CREATE TABLE IF NOT EXISTS)
+test/
+  aceite.js                 # teste de aceite (npm test): servidor + PostgreSQL local reais
+.githooks/
+  pre-push                  # roda o teste de aceite e cancela o push se falhar
 ```
 
 ---
@@ -106,11 +110,11 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **Motor de atribuição**: compara telefone por últimos 9 E últimos 8 dígitos (celular brasileiro às vezes vem com/sem o "9"), dentro de uma janela de `JANELA_ATRIBUICAO_HORAS` (720h = 30 dias) anterior à venda. Com mais de um lead na janela, vale o mais recente.
 - **Classificação de venda da Skale**: ver Regras de negócio.
 - **Campos do webhook da Skale** (evento `order_updated`, catch-all a cada mudança de status; confirmados com payloads reais em 16/09/2026): `transaction_id` (`ven_XXXXXX`), `customer.phone`, `customer.name`, `customer.email`, `product.name` (nome do kit), `transaction.total_price` — **sempre em centavos**, dividido por 100 sempre; faturamento = esse valor bruto, sem descontar taxa/comissão. Evento sem `total_price` **não altera** o valor já salvo.
-- **Meta CAPI**: só manual. A única rota que envia é `enviar-vendas-meta` (backfill por data, com `ctwa_clid`), **só por API — não há botão no painel**. Nenhum webhook envia, e `lancar-venda` também não (desde 16/09/2026).
+- **Meta CAPI**: só manual, pelo botão "Enviar ao Meta" (ver Envio manual abaixo). Nenhum webhook envia, e `lancar-venda` também não (desde 16/09/2026).
 - **Limpeza automática de campanhas apagadas**: cron remove do banco campanha/conjunto/anúncio que sumiu de verdade do Meta (não conta pausado).
 - **Cotação do dólar fixa por dia**: ver Regras de negócio.
 - **Lançamento manual** (`/api/eventos-manuais/lancar-venda`, `/lancar-lead`): herda atribuição automaticamente se o telefone bater. Não envia nada ao Meta. No painel só existe o formulário de venda; `lancar-lead` e `reatribuir` são só API.
-- **Envio manual ao CAPI** (`/api/eventos-manuais/enviar-vendas-meta`): backfill pontual de Purchase por data — só API, sem botão no painel.
+- **Envio manual ao CAPI** — aba "Enviar ao Meta" em Eventos Manuais: escolhe o dia do pagamento, pré-visualiza as vendas aprovadas (`GET /api/eventos-manuais/vendas-para-meta`, marca quem tem `ctwa_clid` e quem **já foi aceita pelo Meta antes**, via `event_id` em `eventos_capi`), confirma e envia (`POST /enviar-vendas-meta`). O envio devolve enviadas × falhas com o motivo real — `enviarEventoCapi` retorna `{ ok, erro }`.
 - **Sincronização sob demanda**: botão "🔄 Sincronizar agora" no painel = `POST /api/dashboard/sincronizar-agora` (mesmo ciclo do cron, na hora).
 - **Páginas do painel**: Overview, Campanhas (com drill-down Campanha→Conjunto→Anúncio), Criativos, Leads, Vendas, Eventos (log CAPI), Eventos Manuais, Configurações. **Agendamentos não é página**: é um dos filtros de status dentro de Vendas (`src/public/vendas.html`), junto com Aprovada, Pendente, Recusada, Cancelada e Reembolsada.
 
@@ -124,7 +128,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
    - qualquer pedido com `payment_status="Pago"` → `aprovada`
    - Antecipada aguardando confirmação → `desconhecido` (aba "Pendente", não conta como venda nem agendamento)
    - recusado → `recusada`; cancelado/estornado/chargeback → `cancelada`
-3. **Meta CAPI: NUNCA automático, em nenhuma integração** (Skale, Payt, DataCrazy). A Skale ficou automática só de 15/09 a 16/09/2026 e foi desligada de novo a pedido do usuário, voltando à regra original. Lançar venda manual também não envia (desde 16/09/2026): **nada dispara pro Meta como efeito colateral de outra ação**. O único envio é o backfill manual `enviar-vendas-meta`; a aba Eventos e o cadastro de pixels continuam existindo. Não religue envio automático em lugar nenhum sem pedido explícito (ver Armadilhas).
+3. **Meta CAPI: NUNCA automático, em nenhuma integração** (Skale, Payt, DataCrazy). A Skale ficou automática só de 15/09 a 16/09/2026 e foi desligada de novo a pedido do usuário, voltando à regra original. Lançar venda manual também não envia (desde 16/09/2026): **nada dispara pro Meta como efeito colateral de outra ação**. O único envio é o botão "Enviar ao Meta" (Eventos Manuais); a aba Eventos e o cadastro de pixels continuam existindo. Não religue envio automático em lugar nenhum sem pedido explícito (ver Armadilhas).
 4. **Cotação do dólar fixa por dia, nunca recalculada depois de definida.** Cada dia trava seu próprio valor na primeira vez que é consultado.
 5. **Campanha/conjunto/anúncio apagado de verdade no Meta some do painel automaticamente; pausado continua aparecendo.**
 6. **Vendas de afiliado da Payt fora da whitelist de `atendentes` são ignoradas** pelo webhook.
@@ -138,7 +142,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 **O Claude Code é o responsável principal pelo código, via Git** (decidido em 16/09/2026). O Claude do chat (claude.ai) não edita mais o repositório: só faz diagnóstico e investigação, e só volta a editar pelo GitHub web em emergência real de produção. Motivo: com dois caminhos de edição ao mesmo tempo, o `main` mudou por baixo de um trabalho em andamento.
 
 1. **Antes de editar:** `git fetch origin` e confirmar que o `main` local não está atrás do `origin/main`. Se houve edição de emergência pelo GitHub web, trazer essas mudanças antes de continuar.
-2. **Testar localmente antes de publicar** — no mínimo `node --check` em todo `.js`. Node 24 LTS está instalado na máquina de desenvolvimento; PostgreSQL local em instalação (16/09/2026).
+2. **`npm test` tem que passar antes de publicar.** O teste de aceite (`test/aceite.js`) sobe servidor + PostgreSQL local de verdade; roda sozinho no `git push` pelo hook `.githooks/pre-push` (num clone novo: `git config core.hooksPath .githooks`). **Nunca** `git push --no-verify`. Mudança de comportamento ganha verificação nova no teste. Máquina de desenvolvimento: Node 24 LTS + PostgreSQL 17 (serviço local, só aceita conexão da própria máquina).
 3. Commits pequenos, com mensagem descritiva em português.
 4. **Publicar só com autorização do usuário** para aquela publicação: `git push origin main`. **Nunca `--force`** — o histórico do `main` é o de produção.
 5. O Railway faz deploy automático a cada push em `main` (10–30s).
@@ -156,6 +160,10 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **`fx_rates` pode ficar vazia mesmo com a função de salvar existindo** — `salvarCotacaoDoDia` só é chamada pela rota manual `/api/fx/dia`; a função de leitura (`obterCotacaoParaData`) precisa *também* chamar o save após buscar ao vivo, senão a "cotação do dia" nunca fica fixa de verdade (bug real, já corrigido, mas fique atento se reaparecer numa refatoração).
 - **CAPI automático "vazando"**: hoje está desligado nas três integrações (Skale, Payt, DataCrazy). Se um dia alguém ligar ou desligar numa delas, confira as outras duas — elas não sincronizam sozinhas, e já houve envio automático continuando num webhook que se achava desligado.
 - **`action_source: 'business_messaging'` + `messaging_channel: 'whatsapp'` derrubou 100% dos envios ao CAPI** (Meta respondia "Invalid parameter") da noite de 15/09 até a reversão em 16/09/2026. Não tentar de novo sem antes descobrir o formato/endpoint correto e testar com `test_event_code`, que manda o evento só pra área de testes do Gerenciador.
+- **`payload_bruto` de vendas da Skale pode ser do PRIMEIRO evento, não do último.** Até 12/09/2026 10:58 (commit `6d823b4`) o `ON CONFLICT` atualizava `valor` mas não `payload_bruto`. Pra venda cujo último evento chegou antes disso, comparar `valor` com o payload guardado compara com um preço velho.
+- **`atribuido_em` não é "hora do último evento"**: `/api/dashboard/reprocessar-atribuicao` (vendas aprovadas sem `ad_id`) e `/api/eventos-manuais/reatribuir` zeram e recalculam o campo.
+- **Até o deploy de 16/09/2026, evento da Skale sem `total_price` zerava o valor da venda** (o código antigo caía em `|| 0`). Pode haver vendas com `valor = 0` em produção por causa disso.
+- **`enviarEventoCapi` nunca lança exceção por recusa do Meta** — registra em `eventos_capi` e devolve `{ ok: false, erro }`. Quem chama tem que olhar o retorno; `try/catch` sozinho conta falha como sucesso.
 - **`UNIQUE(plataforma, id_externo)` é o que evita duplicata** — qualquer lançamento manual ou correção que não preencha esses dois campos com o valor real da plataforma de origem é candidato a duplicar quando o webhook de verdade chegar.
 - **Duplicatas por telefone não são sempre erro**: um mesmo cliente pode ter duas compras reais e distintas com valores diferentes no mesmo telefone — nunca deduplicar só por telefone batendo, sempre confirmar por `id_externo`/valor antes de apagar algo.
 

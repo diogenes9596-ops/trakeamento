@@ -18,8 +18,8 @@ a plataforma de tracking de terceiros que você usava. Cobre:
    Gerenciador de Anúncios.
 6. **Meta CAPI (Conversions API)** — **nenhuma integração envia evento
    automático** (nem Skale, nem Payt, nem DataCrazy), e lançar venda manual
-   também não envia. O único envio é manual, por chamada de API — hoje não há
-   botão pra isso no painel. Veja a seção 7.
+   também não envia. O único envio é o botão **Enviar ao Meta**, na página
+   Eventos Manuais. Veja a seção 7.
 7. **Cotação do dólar** — converte o gasto de contas em USD pra BRL, com a
    cotação travada por dia.
 8. **Dashboard**: Overview, Campanhas (Campanhas → Conjuntos → Anúncios),
@@ -226,13 +226,24 @@ original. Nenhuma origem envia evento de **Lead**.
 **Lançar venda manual também não envia nada ao Meta** (desde 16/09/2026) — só
 registra a venda no painel.
 
-O único envio existente é o **backfill**, `POST /api/eventos-manuais/enviar-vendas-meta`
-— **só por chamada de API, sem botão no painel**. Ele envia o Purchase de todas
-as vendas aprovadas de uma data, com o telefone hasheado (SHA-256) e o
-`ctwa_clid` quando a atribuição achou o lead (identificador do clique no anúncio
-que gerou a conversa no WhatsApp — sem ele, o Meta só tem o telefone pra casar
-a conversão com o anúncio). Cuidado: reenviar uma data que já foi enviada conta
-as conversões duas vezes.
+O único envio existente é a aba **Enviar ao Meta**, na página Eventos Manuais:
+
+1. Você escolhe o **dia do pagamento** e clica em "Ver vendas do dia" — nada é
+   enviado ainda. Aparece a lista das vendas **aprovadas** daquele dia, com:
+   - se a venda tem o **clique do anúncio** (`ctwa_clid`, o identificador do
+     clique que gerou a conversa no WhatsApp — sem ele, o Meta só tem o
+     telefone pra casar a conversão com o anúncio);
+   - se ela **já foi enviada ao Meta antes** (por este botão ou pelo envio
+     automático que existiu entre 15 e 16/09/2026).
+2. "Enviar ao Meta" pede confirmação — avisando quantas já tinham sido
+   enviadas — e manda o Purchase de todas as vendas da lista pro pixel padrão,
+   com o telefone hasheado (SHA-256).
+3. O resultado mostra quantas foram **aceitas pelo Meta** e quantas
+   **falharam, com o motivo** (ex: nenhum pixel padrão configurado). Trocar a
+   data esconde a lista, pra não enviar um dia diferente do que foi conferido.
+
+Por baixo, são as rotas `GET /api/eventos-manuais/vendas-para-meta?data=AAAA-MM-DD`
+(pré-visualização) e `POST /api/eventos-manuais/enviar-vendas-meta` (envio).
 
 **Todo envio fica registrado na aba Eventos**, com payload e resposta (ou erro)
 — é lá que você confere se algo saiu ou falhou.
@@ -268,15 +279,42 @@ as conversões duas vezes.
 - **Vendas** — lista com filtro por origem e por status; **Agendamento é um
   desses filtros, dentro da própria página de Vendas**, não uma página à parte.
 - **Eventos** — log de tudo que foi enviado ao Meta via CAPI.
-- **Eventos Manuais** — lançamento manual de venda (sem envio ao Meta) e
-  cadastro dos produtos do dropdown. Lançar lead, reatribuir período e enviar
-  vendas ao Meta existem só como rotas de API, sem tela.
+- **Eventos Manuais** — três abas: lançar venda manual (sem envio ao Meta),
+  cadastro dos produtos do dropdown e **Enviar ao Meta** (seção 7). Lançar lead
+  e reatribuir período existem só como rotas de API, sem tela.
 - **Configurações** — contas de anúncio, pixels, atendentes, webhooks, cotação
   e marca.
 
 ---
 
-## 10. Segurança
+## 10. Testes
+
+O teste de aceite (`test/aceite.js`) sobe o sistema de verdade — servidor +
+PostgreSQL — e confere o fluxo principal: venda paga na Skale aparecendo na aba
+Vendas como `aprovada` e com o anúncio certo, janela de 30 dias, valor em
+centavos, evento sem `total_price` sem zerar a venda, lançamento manual com ID
+real, e que nada além do botão "Enviar ao Meta" chama o Meta.
+
+```bash
+npm test
+```
+
+Precisa de um **PostgreSQL local** e de um `.env` com `DATABASE_URL` apontando
+pra `localhost`. A cada execução o teste **apaga e recria** o banco
+`trakeamento_teste` nesse PostgreSQL (o banco do `.env` não é tocado) — por
+isso ele **se recusa a rodar** se o `DATABASE_URL` não for `localhost`. Nenhuma
+verificação faz chamada real ao Meta.
+
+**Roda sozinho antes de todo `git push`**: o hook `.githooks/pre-push` cancela
+o push se algum teste falhar. Num clone novo, ative com:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+---
+
+## 11. Segurança
 
 - Só existe **um usuário** (você). Senha guardada com bcrypt; sessão no próprio
   PostgreSQL.
@@ -289,7 +327,7 @@ as conversões duas vezes.
 
 ---
 
-## 11. Próximos ajustes possíveis
+## 12. Próximos ajustes possíveis
 
 - Calibrar o parser da Payt com um payload real (campo `commission`).
 - Na tela de Leads, o nome de campanha/conjunto/anúncio só aparece depois que
