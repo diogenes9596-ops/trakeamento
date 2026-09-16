@@ -1,5 +1,6 @@
 const express = require('express');
 const { obterSecret, salvarSecret, gerarSecretAleatorio } = require('../services/webhookSecretsService');
+const { listarProblemas } = require('../services/webhooksRecebidosService');
 
 const router = express.Router();
 
@@ -39,6 +40,17 @@ router.get('/', async (req, res) => {
       secret: skale,
     },
   });
+});
+
+// Log de problemas dos webhooks (evento com erro ou preso sem processar) --
+// lista da aba Configuracoes > Webhooks.
+router.get('/erros', async (req, res) => {
+  try {
+    res.json(await listarProblemas(100));
+  } catch (err) {
+    console.error('Erro ao listar problemas dos webhooks:', err);
+    res.status(500).json({ erro: 'Erro ao listar problemas dos webhooks' });
+  }
 });
 
 router.post('/:servico/regenerar', async (req, res) => {

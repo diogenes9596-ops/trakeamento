@@ -450,7 +450,52 @@ async function abaWebhooks() {
     ${blocoWebhook('Webhook de Leads (DataCrazy / WhatsApp)', 'datacrazy', cfg.datacrazy)}
     ${blocoWebhook('Webhook de Vendas (Payt)', 'payt', cfg.payt)}
     ${blocoWebhook('Webhook de Vendas (Skale Tracking — Pay After Delivery)', 'skale', cfg.skale)}
+
+    <div class="secao" style="margin-top:24px;">
+      <h2>Erros no processamento</h2>
+      <p class="desc">Eventos que chegaram mas não viraram venda. O payload completo de cada evento fica guardado no banco (tabela <code>webhooks_recebidos</code>). Também aparece aqui evento que ficou mais de 5 minutos sem ser processado.</p>
+    </div>
+    <div class="painel">
+      <div class="tabela-scroll">
+        <table>
+          <thead><tr><th>Recebido em</th><th>Webhook</th><th>Pedido</th><th>Situação</th><th>Erro</th></tr></thead>
+          <tbody id="corpoErrosWebhooks"><tr><td colspan="5">Carregando...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
   `;
+  carregarErrosWebhooks();
+}
+
+function escaparHtml(texto) {
+  return String(texto ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function carregarErrosWebhooks() {
+  const corpo = document.getElementById('corpoErrosWebhooks');
+  if (!corpo) return;
+  let erros = null;
+  try {
+    const resp = await fetch('/api/webhooks-config/erros');
+    if (resp.ok) erros = await resp.json();
+  } catch (e) { /* cai na mensagem abaixo */ }
+  if (!Array.isArray(erros)) {
+    corpo.innerHTML = '<tr><td colspan="5">Não consegui carregar a lista de erros.</td></tr>';
+    return;
+  }
+  if (erros.length === 0) {
+    corpo.innerHTML = '<tr><td colspan="5">Nenhum erro registrado.</td></tr>';
+    return;
+  }
+  corpo.innerHTML = erros.map(e => `
+    <tr>
+      <td>${formatarData(e.recebido_em)}</td>
+      <td>${escaparHtml(e.servico)}</td>
+      <td style="font-family:monospace; font-size:11px;">${escaparHtml(e.id_externo) || '--'}</td>
+      <td><span class="badge ${e.status === 'erro' ? 'ruim' : 'alerta'}">${e.status === 'erro' ? 'ERRO' : 'NÃO PROCESSADO'}</span></td>
+      <td>${e.status === 'erro' ? escaparHtml(e.erro) : 'Recebido e não processado — o servidor pode ter reiniciado no meio'}</td>
+    </tr>
+  `).join('');
 }
 
 // ---------------- MARCA (logo, nome, tagline) ----------------

@@ -4,6 +4,7 @@ const { obterSecret } = require('../services/webhookSecretsService');
 const { atribuirVendasPendentes } = require('../services/attributionService');
 const { normalizarTelefoneBR } = require('../utils/telefone');
 const { instanteDeBrasilia } = require('../utils/datas');
+const { registrarRecebimento, marcarProcessado, marcarErro } = require('../services/webhooksRecebidosService');
 
 const router = express.Router();
 
@@ -105,105 +106,140 @@ router.post('/skale', async (req, res) => {
   // de campos caso a Skale use um formato diferente do que previmos abaixo.
   console.log('Webhook Skale recebido (payload completo):', JSON.stringify(body));
 
+  // Grava o payload ANTES de responder "ok" (pedido do usuario em 16/09/2026)
+  // -- ver src/services/webhooksRecebidosService.js.
+  let recebimentoId = null;
+  try {
+    recebimentoId = await registrarRecebimento('skale', body);
+  } catch (err) {
+    console.error('ERRO ao gravar o payload do webhook da Skale em webhooks_recebidos -- processando antes de responder:', err);
+  }
+
+  if (!recebimentoId) {
+    // Sem o registro do payload, so responde "ok" se a propria venda foi
+    // gravada. Se nem isso deu certo, responde 500: a Skale fica sabendo que
+    // o evento nao foi recebido, em vez de achar que entregou.
+    try {
+      await processarEventoSkale(body);
+      return res.sendStatus(200);
+    } catch (err) {
+      console.error('ERRO ao processar webhook da Skale (payload NAO registrado, respondido 500):', err);
+      return res.sendStatus(500);
+    }
+  }
+
   res.sendStatus(200);
 
+  const idDoPayload = body?.transaction_id ? String(body.transaction_id).slice(0, 255) : null;
   try {
-    // Campos confirmados com payloads reais da Skale em 16/09/2026 -- leitura
-    // direta. Antes cada campo era "o primeiro que existisse" numa lista de
-    // caminhos possiveis, o que podia pegar o campo errado (ex: um id que nao
-    // fosse o transaction_id). Todas as vendas ja gravadas usam ven_XXXXXX
-    // (conferido no banco de producao), entao a troca nao gera duplicata.
-    const idExterno = body?.transaction_id;
-    if (!idExterno) {
-      console.warn('Webhook Skale sem transaction_id. Payload:', JSON.stringify(body).slice(0, 1000));
-      return;
-    }
-    const idExternoTexto = String(idExterno);
-
-    const telefone = normalizarTelefoneBR(body?.customer?.phone);
-
-    const email = body?.customer?.email || null;
-    const nomeCliente = body?.customer?.name || null;
-    const produto = body?.product?.name || null; // nome do kit, ex: "6 MESES"
-
-    // transaction.total_price vem SEMPRE em centavos -- divide por 100 sempre.
-    // (A regra antiga so dividia acima de 10000, o que gravava um produto de
-    // R$ 97,00 como R$ 9.700,00.) Evento sem o campo (ex: atualizacao tardia
-    // de rastreio) deixa valor = null e a venda mantem o valor que ja tinha.
-    const totalPrice = parseFloat(body?.transaction?.total_price);
-    const valor = Number.isFinite(totalPrice) ? totalPrice / 100 : null;
-    if (valor === null) {
-      console.log(`Webhook Skale ${idExternoTexto} sem transaction.total_price -- valor salvo mantido.`);
-    }
-
-    // Campos ESPECIFICOS (nao busca cega) -- confirmados com payloads reais
-    // da Skale: transaction.payment_status Ã© o status financeiro de verdade
-    // ("Pago", "Aguardando Pagamento", "After Pay", "Recusado"...), e
-    // transaction.payment_method Ã© a FORMA escolhida pelo cliente
-    // ("Antecipada" = paga na hora, "After Pay" = paga na entrega).
-    // skaletracking.status_pagamento Ã© usado como reforÃ§o/fallback.
-    const statusPagamento = String(
-      body?.transaction?.payment_status || body?.skaletracking?.status_pagamento || ''
-    ).trim().toLowerCase();
-    const formaPagamento = String(body?.transaction?.payment_method || '').trim().toLowerCase();
-
-    const pago = statusPagamento === 'pago';
-    const recusado = statusPagamento.includes('recus');
-    const cancelado = !recusado && (
-      STATUS_CANCELADO.includes(statusPagamento) || !!buscarValorConhecido(body, STATUS_CANCELADO)
-    );
-    const isAfterPay = formaPagamento === 'after pay' || formaPagamento === 'afterpay';
-
-    // Regra da Skale (Pay After Delivery):
-    // - After Pay ainda nao pago -> vira AGENDAMENTO (fica atribuido por
-    //   telefone; nenhum status dispara evento pro Meta -- ver fim do handler)
-    // - qualquer pedido (Antecipada ou After Pay) com pagamento confirmado
-    //   -> vira VENDA de verdade (aprovada)
-    // - Antecipada (Pix/cartao) ainda aguardando confirmacao -> nao e venda
-    //   nem entrega agendada; a propria Skale tambem exclui isso do
-    //   faturamento dela. Fica "desconhecido" (aparece como Pendente no
-    //   painel) ate o proximo evento (pago/recusado/cancelado) atualizar.
-    let status;
-    if (cancelado) {
-      status = 'cancelada';
-    } else if (recusado) {
-      status = 'recusada';
-    } else if (pago) {
-      status = 'aprovada';
-    } else if (isAfterPay) {
-      status = 'agendamento';
-    } else {
-      status = 'desconhecido';
-    }
-
-    // Data que vai contar como "recebido_em" (o "hoje" da nossa plataforma):
-    // - se o pedido ACABOU de ser pago, usa a data REAL do pagamento que a
-    //   Skale manda -- assim nosso "hoje" bate com o "hoje" da Skale, que
-    //   tambem conta por data de pagamento.
-    // - em qualquer outro caso (agendamento, pendente, cancelada...) nao
-    //   mexe na data -- continua sendo quando o pedido/evento chegou aqui.
-    const dataPagamento = status === 'aprovada' ? extrairDataPagamento(body) : null;
-
-    await pool.query(
-      `INSERT INTO sales (plataforma, id_externo, status, telefone, email, nome_cliente, valor, produto, payload_bruto, recebido_em)
-       VALUES ('skale', $1, $2, $3, $4, $5, COALESCE($6::numeric, 0), $7, $8, COALESCE($9::timestamptz, NOW()))
-       ON CONFLICT (plataforma, id_externo)
-       DO UPDATE SET status = EXCLUDED.status, valor = COALESCE($6::numeric, sales.valor), atribuido_em = NULL,
-                     payload_bruto = EXCLUDED.payload_bruto,
-                     recebido_em = COALESCE($9::timestamptz, sales.recebido_em)`,
-      [idExternoTexto, status, telefone, email, nomeCliente, valor, produto, JSON.stringify(body), dataPagamento]
-    );
-
-    await atribuirVendasPendentes();
-
-    // Envio pro Meta CAPI DESLIGADO de vez a pedido do usuario em 16/09/2026,
-    // voltando a regra original de "nunca enviar automatico" -- mesma regra
-    // do webhook da Payt e do DataCrazy. Ficou ligado aqui so de 15/09 a
-    // 16/09/2026. Esse webhook so registra a venda na plataforma; envio pro
-    // Meta continua disponivel, manual, via /api/eventos-manuais.
+    const { idExterno } = await processarEventoSkale(body);
+    await marcarProcessado(recebimentoId, idExterno);
   } catch (err) {
-    console.error('Erro ao processar webhook da Skale:', err);
+    console.error(`ERRO ao processar webhook da Skale (registro ${recebimentoId} em webhooks_recebidos):`, err);
+    await marcarErro(recebimentoId, err.message, idDoPayload)
+      .catch((e) => console.error('ERRO ao registrar a falha do webhook da Skale:', e));
   }
 });
+
+// Transforma um evento da Skale em venda: grava/atualiza em sales e roda a
+// atribuicao. Lanca erro quando o evento nao vira venda -- quem chama decide o
+// que responder pra Skale e registra a falha.
+async function processarEventoSkale(body) {
+  // Campos confirmados com payloads reais da Skale em 16/09/2026 -- leitura
+  // direta. Antes cada campo era "o primeiro que existisse" numa lista de
+  // caminhos possiveis, o que podia pegar o campo errado (ex: um id que nao
+  // fosse o transaction_id). Todas as vendas ja gravadas usam ven_XXXXXX
+  // (conferido no banco de producao), entao a troca nao gera duplicata.
+  const idExterno = body?.transaction_id;
+  if (!idExterno) {
+    console.warn('Webhook Skale sem transaction_id. Payload:', JSON.stringify(body).slice(0, 1000));
+    throw new Error('Evento sem transaction_id -- a venda nao pode ser identificada');
+  }
+  const idExternoTexto = String(idExterno);
+
+  const telefone = normalizarTelefoneBR(body?.customer?.phone);
+
+  const email = body?.customer?.email || null;
+  const nomeCliente = body?.customer?.name || null;
+  const produto = body?.product?.name || null; // nome do kit, ex: "6 MESES"
+
+  // transaction.total_price vem SEMPRE em centavos -- divide por 100 sempre.
+  // (A regra antiga so dividia acima de 10000, o que gravava um produto de
+  // R$ 97,00 como R$ 9.700,00.) Evento sem o campo (ex: atualizacao tardia
+  // de rastreio) deixa valor = null e a venda mantem o valor que ja tinha.
+  const totalPrice = parseFloat(body?.transaction?.total_price);
+  const valor = Number.isFinite(totalPrice) ? totalPrice / 100 : null;
+  if (valor === null) {
+    console.log(`Webhook Skale ${idExternoTexto} sem transaction.total_price -- valor salvo mantido.`);
+  }
+
+  // Campos ESPECIFICOS (nao busca cega) -- confirmados com payloads reais
+  // da Skale: transaction.payment_status e o status financeiro de verdade
+  // ("Pago", "Aguardando Pagamento", "After Pay", "Recusado"...), e
+  // transaction.payment_method e a FORMA escolhida pelo cliente
+  // ("Antecipada" = paga na hora, "After Pay" = paga na entrega).
+  // skaletracking.status_pagamento e usado como reforco/fallback.
+  const statusPagamento = String(
+    body?.transaction?.payment_status || body?.skaletracking?.status_pagamento || ''
+  ).trim().toLowerCase();
+  const formaPagamento = String(body?.transaction?.payment_method || '').trim().toLowerCase();
+
+  const pago = statusPagamento === 'pago';
+  const recusado = statusPagamento.includes('recus');
+  const cancelado = !recusado && (
+    STATUS_CANCELADO.includes(statusPagamento) || !!buscarValorConhecido(body, STATUS_CANCELADO)
+  );
+  const isAfterPay = formaPagamento === 'after pay' || formaPagamento === 'afterpay';
+
+  // Regra da Skale (Pay After Delivery):
+  // - After Pay ainda nao pago -> vira AGENDAMENTO (fica atribuido por
+  //   telefone; nenhum status dispara evento pro Meta -- ver fim da funcao)
+  // - qualquer pedido (Antecipada ou After Pay) com pagamento confirmado
+  //   -> vira VENDA de verdade (aprovada)
+  // - Antecipada (Pix/cartao) ainda aguardando confirmacao -> nao e venda
+  //   nem entrega agendada; a propria Skale tambem exclui isso do
+  //   faturamento dela. Fica "desconhecido" (aparece como Pendente no
+  //   painel) ate o proximo evento (pago/recusado/cancelado) atualizar.
+  let status;
+  if (cancelado) {
+    status = 'cancelada';
+  } else if (recusado) {
+    status = 'recusada';
+  } else if (pago) {
+    status = 'aprovada';
+  } else if (isAfterPay) {
+    status = 'agendamento';
+  } else {
+    status = 'desconhecido';
+  }
+
+  // Data que vai contar como "recebido_em" (o "hoje" da nossa plataforma):
+  // - se o pedido ACABOU de ser pago, usa a data REAL do pagamento que a
+  //   Skale manda -- assim nosso "hoje" bate com o "hoje" da Skale, que
+  //   tambem conta por data de pagamento.
+  // - em qualquer outro caso (agendamento, pendente, cancelada...) nao
+  //   mexe na data -- continua sendo quando o pedido/evento chegou aqui.
+  const dataPagamento = status === 'aprovada' ? extrairDataPagamento(body) : null;
+
+  await pool.query(
+    `INSERT INTO sales (plataforma, id_externo, status, telefone, email, nome_cliente, valor, produto, payload_bruto, recebido_em)
+     VALUES ('skale', $1, $2, $3, $4, $5, COALESCE($6::numeric, 0), $7, $8, COALESCE($9::timestamptz, NOW()))
+     ON CONFLICT (plataforma, id_externo)
+     DO UPDATE SET status = EXCLUDED.status, valor = COALESCE($6::numeric, sales.valor), atribuido_em = NULL,
+                   payload_bruto = EXCLUDED.payload_bruto,
+                   recebido_em = COALESCE($9::timestamptz, sales.recebido_em)`,
+    [idExternoTexto, status, telefone, email, nomeCliente, valor, produto, JSON.stringify(body), dataPagamento]
+  );
+
+  await atribuirVendasPendentes();
+
+  // Envio pro Meta CAPI DESLIGADO de vez a pedido do usuario em 16/09/2026,
+  // voltando a regra original de "nunca enviar automatico" -- mesma regra
+  // do webhook da Payt e do DataCrazy. Ficou ligado aqui so de 15/09 a
+  // 16/09/2026. Esse webhook so registra a venda na plataforma; envio pro
+  // Meta continua disponivel, manual, via /api/eventos-manuais.
+
+  return { idExterno: idExternoTexto };
+}
 
 module.exports = router;

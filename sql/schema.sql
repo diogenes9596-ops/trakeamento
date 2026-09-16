@@ -140,6 +140,23 @@ CREATE TABLE IF NOT EXISTS eventos_capi (
     enviado_em TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Todo evento recebido pelos webhooks, gravado ANTES de responder "ok" pra
+-- plataforma. Se o processamento falhar, o payload continua aqui com status
+-- 'erro' (lista em Configuracoes > Webhooks). O servidor tambem cria esta
+-- tabela ao subir (src/services/webhooksRecebidosService.js), porque o deploy
+-- nao aplica o schema.sql -- mantenha as duas definicoes iguais.
+CREATE TABLE IF NOT EXISTS webhooks_recebidos (
+    id SERIAL PRIMARY KEY,
+    servico VARCHAR(30) NOT NULL,           -- 'skale'
+    id_externo VARCHAR(255),
+    status VARCHAR(20) NOT NULL DEFAULT 'recebido', -- 'recebido' | 'processado' | 'erro'
+    erro TEXT,
+    payload JSONB,
+    recebido_em TIMESTAMPTZ DEFAULT NOW(),
+    processado_em TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_webhooks_recebidos_status ON webhooks_recebidos(status, recebido_em);
+
 -- Estrutura de campanhas/conjuntos/anuncios espelhada do Meta (nome, status,
 -- orcamento) -- usada pra exibir e tambem pra poder pausar/ativar direto do painel
 CREATE TABLE IF NOT EXISTS meta_campaigns (

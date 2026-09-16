@@ -8,6 +8,7 @@ const pool = require('./db');
 const { exigirLogin } = require('./middleware/auth');
 const { iniciarJobs } = require('./jobs/pullAdSpend');
 const { garantirSecretsIniciais } = require('./services/webhookSecretsService');
+const { garantirTabelaWebhooksRecebidos } = require('./services/webhooksRecebidosService');
 
 const authRoutes = require('./routes/auth');
 const adAccountsRoutes = require('./routes/adAccounts');
@@ -81,5 +82,6 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
   garantirSecretsIniciais().catch((err) => console.error('Erro ao gerar secrets iniciais:', err));
+  garantirTabelaWebhooksRecebidos().catch((err) => console.error('ERRO ao garantir a tabela webhooks_recebidos:', err));
   iniciarJobs();
 });
