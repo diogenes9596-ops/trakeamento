@@ -16,9 +16,9 @@ a plataforma de tracking de terceiros que você usava. Cobre:
 5. **Atribuição** — casa o telefone da venda com o telefone do lead, numa
    janela de tempo configurável, e credita o anúncio certo, sem depender do
    Gerenciador de Anúncios.
-6. **Meta CAPI (Conversions API)** — **só a Skale envia evento automático**, e
-   só Purchase, quando a venda é aprovada. Payt e DataCrazy **não disparam nada
-   automaticamente**; nesses dois o envio é sempre manual. Veja a seção 7.
+6. **Meta CAPI (Conversions API)** — **nenhuma integração envia evento
+   automático** (nem Skale, nem Payt, nem DataCrazy). O envio de Purchase pro
+   Meta é sempre manual, pela página Eventos Manuais. Veja a seção 7.
 7. **Cotação do dólar** — converte o gasto de contas em USD pra BRL, com a
    cotação travada por dia.
 8. **Dashboard**: Overview, Campanhas (Campanhas → Conjuntos → Anúncios),
@@ -37,7 +37,7 @@ Cliente compra na Skale/Payt --webhook--> guarda a venda
                                           motor de atribuição casa telefone
                                           venda <-> lead e credita o ad_id
                                                         |
-                        Skale, venda aprovada: dispara Purchase pro Meta com ctwa_clid
+                   envio MANUAL (Eventos Manuais): Purchase pro Meta com ctwa_clid
                                                         |
                                     Dashboard: gasto x faturamento x ROAS x CPA
 ```
@@ -153,7 +153,7 @@ opção não muda nada por enquanto: o que sai daqui é sempre Purchase.
 - Lead chega via DataCrazy → guardamos telefone + `ad_id` (vindo de `source_id`)
   + `ctwa_clid`.
 - Venda chega (Skale/Payt) → procuramos um lead com aquele telefone dentro da
-  janela de **72 horas** anteriores à venda (ajustável em
+  janela de **30 dias (720 horas)** anteriores à venda (ajustável em
   `JANELA_ATRIBUICAO_HORAS`).
 - A comparação de telefone usa os **últimos 9 e os últimos 8 dígitos**. O "9"
   que prefixa celular no Brasil às vezes vem de um lado e não do outro (a Skale
@@ -178,7 +178,7 @@ e `transaction.payment_method`), nunca uma busca solta pelo JSON:
 
 | Situação no payload | Status aqui | Conta como venda? |
 |---|---|---|
-| Pagamento confirmado (`payment_status = "Pago"`), seja Antecipada ou After Pay | `aprovada` | Sim — e dispara Purchase pro Meta |
+| Pagamento confirmado (`payment_status = "Pago"`), seja Antecipada ou After Pay | `aprovada` | Sim |
 | `payment_method = "After Pay"` e ainda não pago | `agendamento` | Não — entrega agendada, ainda sem dinheiro |
 | Antecipada ainda aguardando confirmação | `desconhecido` | Não — aparece como pendente |
 | Recusado | `recusada` | Não |
@@ -199,28 +199,29 @@ Todas as datas desse fluxo são ancoradas em `-03:00` (Brasília).
 
 | Origem | Evento automático | Envio manual |
 |---|---|---|
-| **Skale** | **Sim** — Purchase quando a venda vira `aprovada`, com o `ctwa_clid` do lead casado na atribuição | Disponível |
+| **Skale** | **Não** | Disponível |
 | **Payt** | **Não** | Disponível |
 | **DataCrazy** | **Não** | — |
 
-Nenhuma origem envia evento de **Lead** automaticamente.
+**Nenhum webhook dispara evento pro Meta.** A Skale chegou a enviar Purchase
+automático entre 15/09 e 16/09/2026 e foi desligada de novo, voltando à regra
+original. Nenhuma origem envia evento de **Lead**.
 
-O Purchase vai com o telefone hasheado (SHA-256) e, quando a atribuição achou o
-lead, com o `ctwa_clid` — que é o identificador do clique no anúncio que gerou a
-conversa no WhatsApp. Sem ele, o Meta só teria o telefone pra tentar casar a
-conversão com o anúncio, o que é bem mais fraco.
+Os envios, todos manuais, ficam em **Eventos Manuais**:
 
-Cada evento leva um `event_id` estável (`skale_<id do pedido>`), pra deduplicar
-com o pixel do navegador. **Todo envio fica registrado na aba Eventos**, com
-payload e resposta (ou erro) — é lá que você confere se algo saiu ou falhou.
+- `lançar venda` — venda avulsa; **dispara Purchase** na hora, com o telefone
+  hasheado (SHA-256). A API aceita `pular_capi` pra não enviar (o certo ao
+  importar histórico, pra não duplicar conversão antiga com a data de hoje),
+  mas o formulário do painel não tem essa opção: venda lançada por ele sempre
+  envia. Com o ID do pedido na Skale, o `event_id` é `skale_<id do pedido>`.
+- `enviar vendas ao Meta` — backfill: envia o Purchase de todas as vendas
+  aprovadas de uma data, com o `ctwa_clid` quando a atribuição achou o lead
+  (identificador do clique no anúncio que gerou a conversa no WhatsApp — sem
+  ele, o Meta só tem o telefone pra casar a conversão com o anúncio). Cuidado:
+  reenviar uma data que já foi enviada conta as conversões duas vezes.
 
-Os envios manuais ficam em **Eventos Manuais**:
-
-- `lançar venda` — venda avulsa; dispara Purchase, a não ser que você marque
-  pra pular (é o certo ao importar histórico, pra não duplicar conversão antiga
-  com a data de hoje).
-- `enviar vendas ao Meta` — backfill: reenvia o Purchase das vendas aprovadas de
-  uma data específica.
+**Todo envio fica registrado na aba Eventos**, com payload e resposta (ou erro)
+— é lá que você confere se algo saiu ou falhou.
 
 ---
 

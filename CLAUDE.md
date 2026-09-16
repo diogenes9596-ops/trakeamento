@@ -13,7 +13,7 @@ O que o sistema faz, em ordem:
 2. Recebe **vendas** via webhook da Skale Tracking (principal) e da Payt (secundária, hoje sem tráfego).
 3. **Atribui**: cruza telefone da venda com telefone do lead recente pra creditar o anúncio certo, sem depender do Gerenciador de Anúncios do Meta.
 4. Puxa **gasto** direto da Graph API do Meta (não depende de nenhum evento de conversão pra saber quanto foi gasto).
-5. Notifica o **Meta CAPI** (Purchase) quando uma venda da Skale é aprovada, incluindo `ctwa_clid`.
+5. Envia **Purchase ao Meta CAPI só manualmente** (página Eventos Manuais), com `ctwa_clid` quando a atribuição achou o lead. Nenhum webhook envia automático.
 6. Mostra tudo num dashboard: gasto × faturamento × ROAS × CPA, por anúncio/conjunto/campanha/criativo.
 
 ```
@@ -24,7 +24,7 @@ Cliente compra na Skale/Payt --webhook--> guarda venda
                                     motor de atribuição casa telefone
                                     venda <-> lead, credita ad_id
                                                          |
-                        Skale: dispara Purchase pro Meta com ctwa_clid
+                  envio MANUAL (Eventos Manuais): Purchase pro Meta
                                                          |
                                     Dashboard: gasto x venda x ROAS
 ```
@@ -41,9 +41,9 @@ Cliente compra na Skale/Payt --webhook--> guarda venda
 - Repositório: GitHub `diogenes9596-ops/trakeamento`
 - Integrações externas: Meta Graph API (gasto + estrutura de campanhas + CAPI), Skale Tracking (webhook), Payt (webhook), DataCrazy (webhook)
 
-**Por que não usar ORM/framework de frontend:** decisão original do projeto — simplicidade de deploy e debug em produção via edição direta de arquivo (ver seção "Fluxo de deploy" abaixo). Não introduza Prisma/TypeORM/React/Next sem alinhar antes; isso quebraria todo o fluxo de manutenção já estabelecido.
+**Por que não usar ORM/framework de frontend:** decisão original do projeto — simplicidade de deploy e de debug em produção (ver seção "Fluxo de deploy" abaixo). Não introduza Prisma/TypeORM/React/Next sem alinhar antes; isso quebraria todo o fluxo de manutenção já estabelecido.
 
-**Variáveis de ambiente principais:** `DATABASE_URL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET`, `JANELA_ATRIBUICAO_HORAS` (padrão 72).
+**Variáveis de ambiente principais:** `DATABASE_URL`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET`, `JANELA_ATRIBUICAO_HORAS` (720 = 30 dias, configurado no Railway desde 16/09/2026; o padrão no código é o mesmo 720).
 
 ---
 
@@ -103,15 +103,15 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 ## Funcionalidades
 
 - **Contas de anúncio**: cadastro individual ou importação em lote ("Importar BM" — cola token + lista de IDs, sistema resolve nome/moeda).
-- **Motor de atribuição**: compara telefone por últimos 9 E últimos 8 dígitos (celular brasileiro às vezes vem com/sem o "9"), dentro de uma janela de `JANELA_ATRIBUICAO_HORAS` (padrão 72h) anterior à venda.
+- **Motor de atribuição**: compara telefone por últimos 9 E últimos 8 dígitos (celular brasileiro às vezes vem com/sem o "9"), dentro de uma janela de `JANELA_ATRIBUICAO_HORAS` (720h = 30 dias) anterior à venda. Com mais de um lead na janela, vale o mais recente.
 - **Classificação de venda da Skale**: ver Regras de negócio.
-- **Meta CAPI**: Skale envia Purchase automático com `ctwa_clid`; Payt/DataCrazy só manual.
+- **Meta CAPI**: só manual, nas três integrações — `lancar-venda` (dispara Purchase, exceto com `pular_capi`, que o formulário do painel não oferece) e `enviar-vendas-meta` (backfill por data, com `ctwa_clid`). Nenhum webhook envia.
 - **Limpeza automática de campanhas apagadas**: cron remove do banco campanha/conjunto/anúncio que sumiu de verdade do Meta (não conta pausado).
 - **Cotação do dólar fixa por dia**: ver Regras de negócio.
 - **Lançamento manual** (`/api/eventos-manuais/lancar-venda`, `/lancar-lead`): herda atribuição automaticamente se o telefone bater.
 - **Envio manual ao CAPI** (`/api/eventos-manuais/enviar-vendas-meta`): backfill pontual de Purchase por data.
 - **Sincronização sob demanda**: botão "🔄 Sincronizar agora" no painel = `POST /api/dashboard/sincronizar-agora` (mesmo ciclo do cron, na hora).
-- **Páginas do painel**: Overview, Campanhas (com drill-down Campanha→Conjunto→Anúncio), Criativos, Leads, Vendas, Eventos (log CAPI), Eventos Manuais, Configurações. **Agendamentos não é página**: é um dos filtros de status dentro de Vendas (`src/public/vendas.html`), junto com Aprovada, Pendente, Recusada e Reembolsada.
+- **Páginas do painel**: Overview, Campanhas (com drill-down Campanha→Conjunto→Anúncio), Criativos, Leads, Vendas, Eventos (log CAPI), Eventos Manuais, Configurações. **Agendamentos não é página**: é um dos filtros de status dentro de Vendas (`src/public/vendas.html`), junto com Aprovada, Pendente, Recusada, Cancelada e Reembolsada.
 
 ---
 
@@ -123,7 +123,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
    - qualquer pedido com `payment_status="Pago"` → `aprovada`
    - Antecipada aguardando confirmação → `desconhecido` (aba "Pendente", não conta como venda nem agendamento)
    - recusado → `recusada`; cancelado/estornado/chargeback → `cancelada`
-3. **Meta CAPI da Skale: automático desde 15/09/2026.** Ao aprovar uma venda, busca o `ctwa_clid` do lead já casado na atribuição e manda Purchase com telefone (hash) + `ctwa_clid`. **Payt e DataCrazy continuam manuais** — não ligue o automático neles sem pedido explícito (já rolou um incidente de CAPI automático "vazando" nesses dois sem ninguém perceber; ver Armadilhas).
+3. **Meta CAPI: NUNCA automático, em nenhuma integração** (Skale, Payt, DataCrazy). A Skale ficou automática só de 15/09 a 16/09/2026 e foi desligada de novo a pedido do usuário, voltando à regra original. O envio ao Meta é sempre manual (página Eventos Manuais); a aba Eventos e o cadastro de pixels continuam existindo. Não religue o automático em nenhuma das três sem pedido explícito (ver Armadilhas).
 4. **Cotação do dólar fixa por dia, nunca recalculada depois de definida.** Cada dia trava seu próprio valor na primeira vez que é consultado.
 5. **Campanha/conjunto/anúncio apagado de verdade no Meta some do painel automaticamente; pausado continua aparecendo.**
 6. **Vendas de afiliado da Payt fora da whitelist de `atendentes` são ignoradas** pelo webhook.
@@ -132,24 +132,29 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 
 ---
 
-## Fluxo de deploy (sem terminal Git local neste ambiente)
+## Fluxo de deploy
 
-1. Buscar o conteúdo atual do arquivo **via API do GitHub** (`api.github.com/repos/diogenes9596-ops/trakeamento/contents/<path>`) — **nunca** via `raw.githubusercontent.com`, que tem cache de CDN e já causou sobrescrita de correção com conteúdo desatualizado.
-2. Editar via `document.execCommand('insertText')` no editor web do GitHub, depois de `selectAll`.
-3. Commitar pela interface web do GitHub.
-4. Aguardar o deploy automático no Railway (10–30s).
-5. Confirmar "ACTIVE"/"Deployment successful" no Railway antes de considerar concluído.
-6. Reler o arquivo pela API do GitHub de novo pra confirmar o resultado final — nunca confiar em cópia local.
+**O Claude Code é o responsável principal pelo código, via Git** (decidido em 16/09/2026). O Claude do chat (claude.ai) não edita mais o repositório: só faz diagnóstico e investigação, e só volta a editar pelo GitHub web em emergência real de produção. Motivo: com dois caminhos de edição ao mesmo tempo, o `main` mudou por baixo de um trabalho em andamento.
+
+1. **Antes de editar:** `git fetch origin` e confirmar que o `main` local não está atrás do `origin/main`. Se houve edição de emergência pelo GitHub web, trazer essas mudanças antes de continuar.
+2. **Testar localmente antes de publicar** — no mínimo `node --check` em todo `.js`. Node 24 LTS está instalado na máquina de desenvolvimento; PostgreSQL local em instalação (16/09/2026).
+3. Commits pequenos, com mensagem descritiva em português.
+4. **Publicar só com autorização do usuário** para aquela publicação: `git push origin main`. **Nunca `--force`** — o histórico do `main` é o de produção.
+5. O Railway faz deploy automático a cada push em `main` (10–30s).
+6. **O Claude Code não tem acesso ao Railway nem ao banco de produção.** Confirmação do deploy ("Deployment successful"), logs e resultado de consultas vêm do usuário, quando pedidos.
+7. Para ler o que está publicado sem Git, usar a API do GitHub (`api.github.com/repos/diogenes9596-ops/trakeamento/contents/<path>`) — **nunca** `raw.githubusercontent.com`, que tem cache de CDN e já causou sobrescrita de correção com conteúdo desatualizado.
 
 ---
 
 ## Armadilhas conhecidas (gotchas)
 
-- **Não confie em cópias locais do código numa sessão longa.** Em pelo menos duas ocasiões um arquivo local ficou corrompido (import duplicado, rota truncada) sem nenhuma ação explícita que explicasse — o código publicado nunca foi afetado, mas o hábito seguro é sempre reconferir via API do GitHub antes de editar.
+- **Sempre `git fetch` antes de editar.** Já houve arquivo local corrompido sem nenhuma ação explícita (import duplicado, rota truncada) e `main` alterado pelo GitHub web durante uma sessão. `git status` e `git diff origin/main` mostram na hora se o local divergiu.
+- **Editar pelo GitHub web piora a codificação dos acentos a cada salvamento**: comentários antigos já aparecem como `sÃÂ³` e ganham mais uma camada a cada edição web. Por isso comentários novos em `.js` são escritos sem acento.
 - **Telefone brasileiro**: sempre comparar por últimos 9 E últimos 8 dígitos. Uma fonte pode mandar com o "9" do celular, outra sem.
 - **Datas sem hora exata**: nunca faça fallback pra meia-noite sem `-03:00` explícito — isso já quebrou tanto a atribuição (lead parecia vir "depois" da venda) quanto a data de exibição no painel (venda caindo no dia errado dependendo do fuso da comparação).
 - **`fx_rates` pode ficar vazia mesmo com a função de salvar existindo** — `salvarCotacaoDoDia` só é chamada pela rota manual `/api/fx/dia`; a função de leitura (`obterCotacaoParaData`) precisa *também* chamar o save após buscar ao vivo, senão a "cotação do dia" nunca fica fixa de verdade (bug real, já corrigido, mas fique atento se reaparecer numa refatoração).
-- **CAPI automático "vazando"**: ao ligar/desligar envio automático numa integração (Skale/Payt/DataCrazy), sempre confira as outras duas também — elas não sincronizam sozinhas, e um webhook pode continuar mandando eventos automáticos que você achava que tinha desligado globalmente.
+- **CAPI automático "vazando"**: hoje está desligado nas três integrações (Skale, Payt, DataCrazy). Se um dia alguém ligar ou desligar numa delas, confira as outras duas — elas não sincronizam sozinhas, e já houve envio automático continuando num webhook que se achava desligado.
+- **`action_source: 'business_messaging'` + `messaging_channel: 'whatsapp'` derrubou 100% dos envios ao CAPI** (Meta respondia "Invalid parameter") da noite de 15/09 até a reversão em 16/09/2026. Não tentar de novo sem antes descobrir o formato/endpoint correto e testar com `test_event_code`, que manda o evento só pra área de testes do Gerenciador.
 - **`UNIQUE(plataforma, id_externo)` é o que evita duplicata** — qualquer lançamento manual ou correção que não preencha esses dois campos com o valor real da plataforma de origem é candidato a duplicar quando o webhook de verdade chegar.
 - **Duplicatas por telefone não são sempre erro**: um mesmo cliente pode ter duas compras reais e distintas com valores diferentes no mesmo telefone — nunca deduplicar só por telefone batendo, sempre confirmar por `id_externo`/valor antes de apagar algo.
 
