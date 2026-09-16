@@ -3,6 +3,7 @@ const pool = require('../db');
 const { sincronizarTodasContas, atualizarStatus } = require('../services/metaAdsService');
 const { atribuirVendasPendentes } = require('../services/attributionService');
 const { hojeEmBrasilia, diasAtrasEmBrasilia } = require('../utils/datas');
+const { normalizarTelefoneBR } = require('../utils/telefone');
 
 const router = express.Router();
 
@@ -551,6 +552,63 @@ router.patch('/vendas/:id/status', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: 'Erro ao atualizar status' });
+  }
+});
+
+// Corrige o telefone de uma venda da Skale gravado SEM o DDI 55 pela regra
+// antiga ("nao comeca com 55? coloca 55"), que confundia o DDI com o DDD 55 do
+// Rio Grande do Sul. Criada pra aplicar a correcao pelo painel, sem acesso ao
+// banco (pedido do usuario em 16/09/2026).
+//
+// NAO e uma edicao livre de telefone: nao recebe numero nenhum. O telefone
+// certo sai do telefone original que a propria Skale mandou
+// (payload_bruto.customer.phone, normalizado por normalizarTelefoneBR), e a
+// correcao so e aplicada quando '55' + telefone gravado da EXATAMENTE esse
+// valor. Numero que veio sem DDD, ou diferente do original, e recusado (422).
+//
+// Sem { "confirmar": true } no corpo, so confere e mostra o que faria.
+router.post('/vendas-skale/:idExterno/corrigir-telefone', async (req, res) => {
+  const confirmar = req.body?.confirmar === true;
+  try {
+    const venda = (await pool.query(
+      `SELECT id, id_externo, telefone, payload_bruto->'customer'->>'phone' AS telefone_original
+       FROM sales WHERE plataforma = 'skale' AND id_externo = $1`,
+      [req.params.idExterno]
+    )).rows[0];
+    if (!venda) return res.status(404).json({ erro: 'Venda da Skale nao encontrada' });
+
+    const gravado = venda.telefone || '';
+    const certo = normalizarTelefoneBR(venda.telefone_original);
+    const resumo = { id_externo: venda.id_externo, telefone_gravado: gravado, telefone_certo: certo };
+
+    if (certo && gravado === certo) {
+      return res.json({ ...resumo, situacao: 'ja_estava_certo', alterado: false });
+    }
+    const podeCorrigir = !!certo && [10, 11].includes(gravado.length) && ('55' + gravado) === certo;
+    if (!podeCorrigir) {
+      return res.status(422).json({
+        ...resumo, situacao: 'fora_da_regra', alterado: false,
+        erro: 'Correcao recusada: o telefone original da Skale nao confirma que falta so o DDI 55',
+      });
+    }
+    if (!confirmar) {
+      return res.json({ ...resumo, situacao: 'pode_corrigir', alterado: false,
+        instrucao: 'Envie de novo com { "confirmar": true } no corpo pra aplicar' });
+    }
+
+    // "AND telefone = $3": se o telefone mudou desde a leitura, nao sobrescreve
+    const r = await pool.query(
+      `UPDATE sales SET telefone = $1 WHERE id = $2 AND telefone = $3 RETURNING telefone`,
+      [certo, venda.id, gravado]
+    );
+    if (!r.rows[0]) {
+      return res.status(409).json({ ...resumo, alterado: false, erro: 'O telefone mudou durante a correcao -- confira de novo' });
+    }
+    console.log(`Telefone corrigido pelo painel (DDI 55 que faltava): venda ${venda.id_externo}.`);
+    res.json({ ...resumo, situacao: 'corrigido', alterado: true });
+  } catch (err) {
+    console.error('Erro ao corrigir telefone da venda:', err);
+    res.status(500).json({ erro: 'Erro ao corrigir telefone' });
   }
 });
 
