@@ -2,7 +2,6 @@ const express = require('express');
 const pool = require('../db');
 const { obterSecret } = require('../services/webhookSecretsService');
 const { atribuirVendasPendentes } = require('../services/attributionService');
-const { enviarEventoCapi } = require('../services/metaCapiService');
 
 const router = express.Router();
 
@@ -176,7 +175,7 @@ router.post('/skale', async (req, res) => {
 
     // Regra da Skale (Pay After Delivery):
     // - After Pay ainda nao pago -> vira AGENDAMENTO (fica atribuido por
-    //   telefone, mas NAO dispara Purchase pro Meta ainda -- desligado)
+    //   telefone; nenhum status dispara evento pro Meta -- ver fim do handler)
     // - qualquer pedido (Antecipada ou After Pay) com pagamento confirmado
     //   -> vira VENDA de verdade (aprovada)
     // - Antecipada (Pix/cartao) ainda aguardando confirmacao -> nao e venda
@@ -216,25 +215,11 @@ router.post('/skale', async (req, res) => {
 
     await atribuirVendasPendentes();
 
-    // Envio pro Meta CAPI -- REATIVADO a pedido explicito do usuario em
-    // 15/09/2026 (substitui a regra anterior de "nunca enviar automatico").
-    // So dispara Purchase quando o pedido vira venda de verdade (aprovada),
-    // buscando o ctwa_clid do lead que a atribuicao acima ja casou (se achou
-    // algum), pra dar ao Meta o mesmo identificador do clique no anuncio que
-    // originou a conversa -- sem isso o match fica so por telefone (hash).
-    if (status === 'aprovada') {
-      let ctwaClid = null;
-      try {
-        const r = await pool.query(
-          `SELECT l.ctwa_clid FROM sales s
-           JOIN leads l ON l.id = s.lead_id
-           WHERE s.plataforma = 'skale' AND s.id_externo = $1`,
-          [idExternoTexto]
-        );
-        ctwaClid = r.rows[0]?.ctwa_clid || null;
-      } catch (e) { /* segue sem ctwa_clid se der erro na busca */ }
-      await enviarEventoCapi({ evento: 'Purchase', telefone, valor, eventId: `skale_${idExternoTexto}`, ctwaClid });
-    }
+    // Envio pro Meta CAPI DESLIGADO de vez a pedido do usuario em 16/09/2026,
+    // voltando a regra original de "nunca enviar automatico" -- mesma regra
+    // do webhook da Payt e do DataCrazy. Ficou ligado aqui so de 15/09 a
+    // 16/09/2026. Esse webhook so registra a venda na plataforma; envio pro
+    // Meta continua disponivel, manual, via /api/eventos-manuais.
   } catch (err) {
     console.error('Erro ao processar webhook da Skale:', err);
   }
