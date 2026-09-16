@@ -45,9 +45,10 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
           <div id="filtroStatus" style="display:flex; gap:6px; flex-wrap:wrap;">
             <span class="chip ativo" data-status="todos">Todos</span>
             <span class="chip" data-status="aprovada">Aprovada</span>
-            <span class="chip" data-status="aguardando">Pendente</span>
+            <span class="chip" data-status="desconhecido">Pendente</span>
             <span class="chip" data-status="reembolsada">Reembolsada</span>
             <span class="chip" data-status="recusada">Recusada</span>
+            <span class="chip" data-status="cancelada">Cancelada</span>
             <span class="chip" data-status="agendamento">Agendamento</span>
           </div>
         </div>
@@ -97,7 +98,12 @@ document.getElementById('busca').addEventListener('input', () => {
   timeoutBusca = setTimeout(carregar, 350);
 });
 
-const badgeStatus = { aprovada: 'bom', recusada: 'ruim', reembolsada: 'ruim', aguardando: 'neutro', agendamento: 'alerta' };
+// "aguardando" e "reembolsada" sao status antigos: a Skale nao produz mais
+// nenhum dos dois (hoje ela gera aprovada/agendamento/desconhecido/recusada/
+// cancelada), mas o webhook da Payt ainda mapeia pagamento pendente pra
+// "aguardando" -- entao os dois ficam aqui pra linha antiga nao aparecer sem
+// cor no painel.
+const badgeStatus = { aprovada: 'bom', recusada: 'ruim', cancelada: 'ruim', reembolsada: 'ruim', desconhecido: 'neutro', aguardando: 'neutro', agendamento: 'alerta' };
 
 async function carregar() {
   const busca = document.getElementById('busca').value;

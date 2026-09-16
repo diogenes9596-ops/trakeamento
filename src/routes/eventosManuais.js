@@ -17,7 +17,7 @@ function normalizarTelefoneBR(telefone) {
 // LanÃ§a uma venda manualmente (fora de qualquer webhook). Se o telefone bater
 // com um lead existente, a atribuiÃ§Ã£o Ã© herdada automaticamente.
 router.post('/lancar-venda', async (req, res) => {
-  const { telefone, email, nome, pais, estado, cidade, cep, produto_id, valor, data, pular_capi } = req.body;
+  const { id_externo, telefone, email, nome, pais, estado, cidade, cep, produto_id, valor, data, pular_capi } = req.body;
 
   if (!telefone && !email) {
     return res.status(400).json({ erro: 'Informe pelo menos telefone ou email' });
@@ -25,7 +25,17 @@ router.post('/lancar-venda', async (req, res) => {
 
   try {
     const telefoneNormalizado = normalizarTelefoneBR(telefone);
-    const idExterno = `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    // Todo lancamento manual corresponde a um pedido REAL da Skale, entao o
+    // certo e gravar com o id_externo de la (ven_XXXXXX) e plataforma
+    // "skale": e o par (plataforma, id_externo) que segura a duplicata --
+    // quando o webhook de verdade chegar, ele cai NESSE registro em vez de
+    // criar outro. Inventar um id aqui e o que ja gerou dezenas de vendas
+    // duplicadas, por isso o "manual_<timestamp>" so sobrou como ultimo
+    // recurso, com aviso no log.
+    const idSkale = String(id_externo || '').trim();
+    const plataforma = idSkale ? 'skale' : 'manual';
+    const idExterno = idSkale || `manual_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
     let produtoNome = null;
     let valorFinal = parseFloat(valor || 0);
@@ -44,11 +54,25 @@ router.post('/lancar-venda', async (req, res) => {
     // de dias diferentes ficaria todo empilhado no dia do lancamento.
     const recebidoEm = data ? `${data}T12:00:00Z` : null;
 
+    if (!idSkale) {
+      console.warn(
+        '\n===================== ATENCAO =====================\n' +
+        'Venda manual lancada SEM o id do pedido na Skale.\n' +
+        `Id provisorio gerado: ${idExterno} (plataforma "manual").\n` +
+        'Pelo processo do negocio isso nao deveria acontecer: todo pedido\n' +
+        'lancado manualmente existe na Skale. Como a chave unica e o par\n' +
+        '(plataforma, id_externo), quando o webhook real desse pedido chegar\n' +
+        'ele vai criar OUTRA linha e a venda aparece duplicada no painel.\n' +
+        `Cliente: ${nome || '(sem nome)'} | telefone: ${telefoneNormalizado || '(sem telefone)'} | valor: ${valorFinal}\n` +
+        '===================================================\n'
+      );
+    }
+
     const result = await pool.query(
       `INSERT INTO sales (plataforma, id_externo, status, telefone, email, nome_cliente, valor, produto, payload_bruto, recebido_em)
-       VALUES ('manual', $1, 'aprovada', $2, $3, $4, $5, $6, $7, COALESCE($8::timestamptz, NOW()))
+       VALUES ($1, $2, 'aprovada', $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()))
        RETURNING *`,
-      [idExterno, telefoneNormalizado, email || null, nome || null, valorFinal, produtoNome,
+      [plataforma, idExterno, telefoneNormalizado, email || null, nome || null, valorFinal, produtoNome,
        JSON.stringify({ pais, estado, cidade, cep }), recebidoEm]
     );
 
@@ -73,11 +97,23 @@ router.post('/lancar-venda', async (req, res) => {
     // provavelmente ja disparou o evento de verdade na epoca; reenviar aqui
     // so duplicaria a conversao no Gerenciador de Anuncios com a data de hoje.
     if (!pular_capi) {
-      await enviarEventoCapi({ evento: 'Purchase', telefone: telefoneNormalizado, valor: valorFinal, eventId: idExterno });
+      // Com id da Skale, usa exatamente o mesmo event_id que o webhook dela
+      // usaria pra esse pedido (skale_<id>) -- assim, se o webhook chegar
+      // depois e disparar o Purchase dele, o Meta deduplica os dois em vez
+      // de contar a conversao duas vezes.
+      const eventId = plataforma === 'skale' ? `skale_${idExterno}` : idExterno;
+      await enviarEventoCapi({ evento: 'Purchase', telefone: telefoneNormalizado, valor: valorFinal, eventId });
     }
 
     res.status(201).json(venda);
   } catch (err) {
+    // 23505 = violacao do UNIQUE (plataforma, id_externo): esse pedido ja
+    // esta no banco, quase sempre porque o webhook da Skale ja registrou ele.
+    // Melhor recusar e avisar do que gravar uma segunda linha do mesmo pedido.
+    if (err.code === '23505') {
+      console.warn(`Lancamento manual recusado: ja existe venda com id_externo "${req.body?.id_externo}".`);
+      return res.status(409).json({ erro: 'Ja existe uma venda com esse ID da Skale. Confira na aba Vendas.' });
+    }
     console.error('Erro ao lancar venda manual:', err);
     res.status(500).json({ erro: 'Erro ao lancar venda manual' });
   }
