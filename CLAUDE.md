@@ -177,8 +177,10 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 
 ## Pendências abertas (não mexer sem o usuário)
 
-- **Venda `ven_158205`: status decidido `desconhecido`** (usuário, 16/09/2026). Conferido na Skale: **nunca foi paga** — 5 cobranças recusadas em 11/09/2026 e uma ainda "Aguardando Pagamento" (por isso não `recusada`: a cliente ainda pode pagar). O valor R$ 483,00 está certo (kit trocado de R$ 773 no mesmo dia). Ficou `aprovada` por causa da busca cega por "Pago" (ver Armadilhas). **Falta confirmar que o UPDATE foi aplicado em produção.** Se a cobrança for paga, o próximo evento da Skale atualiza o status sozinho.
-- **Conferência das vendas `aprovada` antigas contra a Skale** (candidatas: aprovadas com `recebido_em` antes de 12/09/2026): autorizada em 16/09/2026, aguardando a lista vinda da produção.
+- **Conferência das vendas `aprovada` antigas contra a Skale** (candidatas: aprovadas com `recebido_em` antes de 12/09/2026, 104 no total): **100 conferidas em 16/09/2026** com `get_pagamentos_do_pedido`, **todas pagas**. Faltam 4 IDs, que não vieram na lista copiada da produção. (A `ven_158205`, único caso achado, já está `desconhecido` — nunca foi paga; ver Armadilhas.)
+- **Dados antigos que as correções de 16/09/2026 não alteram** — o usuário decide depois de ver o tamanho:
+  - telefones de 10/11 dígitos em vendas `skale`/`manual`: **candidatos**, não certeza — pode ser celular do RS sem DDI ou número que veio sem DDD (a regra antiga transformava os dois no mesmo texto);
+  - vendas manuais lançadas só com data antes do deploy, gravadas às 09:00 de Brasília (12:00:00 UTC): podem ter perdido lead chegado no mesmo dia depois das 9h.
 
 ---
 
