@@ -204,7 +204,19 @@ async function main() {
   await dormir(500);
   checar('webhook e lancamento manual NAO chamaram o CAPI', chamadasCapi() === 0, `${chamadasCapi()} chamada(s)`);
 
-  // === 5. Aba "Enviar ao Meta" ===
+  // === 5. Reprocessar atribuicao: datas como parametro, nunca coladas no SQL ===
+  const injecao = await api('/api/dashboard/reprocessar-atribuicao', {
+    method: 'POST', body: JSON.stringify({ data_inicio: "2026-09-16' OR '1'='1", data_fim: '2026-09-16' }),
+  });
+  checar('reprocessar atribuicao recusa data com SQL injetado (400)', injecao.status === 400, injecao.status);
+  const reproc = await api('/api/dashboard/reprocessar-atribuicao', {
+    method: 'POST', body: JSON.stringify({ data_inicio: '2026-09-16', data_fim: '2026-09-16' }),
+  });
+  const rr = await reproc.json();
+  // no dia, so ven_TESTE02 esta aprovada e sem anuncio
+  checar('reprocessar atribuicao com datas validas reprocessa so as sem anuncio do periodo', reproc.ok && rr.resetadas === 1, `${reproc.status}, resetadas=${rr.resetadas}`);
+
+  // === 6. Aba "Enviar ao Meta" ===
   // Simula um Purchase ja aceito antes pro ven_TESTE02
   await pool.query(
     `INSERT INTO eventos_capi (evento, pixel_id, status, payload) VALUES ('Purchase', 'PIXEL_TESTE', 'ok', $1)`,
@@ -221,13 +233,16 @@ async function main() {
   checar('data invalida responde 400', (await api('/api/eventos-manuais/vendas-para-meta?data=16-09-2026')).status === 400);
 
   // Sem pixel configurado o envio tem que aparecer como FALHA -- antes a rota
-  // contava como "enviado" mesmo sem enviar nada.
+  // contava como "enviado" mesmo sem enviar nada. A venda ja aceita pelo Meta
+  // (ven_TESTE02) e pulada, sem tentar enviar.
   const envio = await (await api('/api/eventos-manuais/enviar-vendas-meta', { method: 'POST', body: JSON.stringify({ data: '2026-09-16' }) })).json();
-  checar('envio sem pixel: 0 enviadas e 3 falhas com o motivo',
-    envio.enviados?.length === 0 && envio.falhas?.length === 3 && envio.falhas.every(f => /pixel/i.test(f.erro)),
+  checar('envio sem pixel: 0 enviadas e 2 falhas com o motivo',
+    envio.enviados?.length === 0 && envio.falhas?.length === 2 && envio.falhas.every(f => /pixel/i.test(f.erro)),
     `${envio.enviados?.length} enviadas, ${envio.falhas?.length} falhas`);
-  // Controle: a rota de envio chama o CAPI -- prova que o detector acima enxerga chamadas.
-  checar('controle: o detector de chamadas ao CAPI enxerga o envio manual', chamadasCapi() === 3, `${chamadasCapi()} chamada(s)`);
+  checar('envio pula a venda ja aceita pelo Meta', envio.puladas?.length === 1 && envio.puladas[0].nome === 'Cliente Teste B',
+    `${envio.puladas?.length} pulada(s)`);
+  // Controle: a rota de envio chama o CAPI (2 vezes, a pulada nao) -- prova que o detector acima enxerga chamadas.
+  checar('controle: o detector enxerga o envio manual, sem a venda pulada', chamadasCapi() === 2, `${chamadasCapi()} chamada(s)`);
 }
 
 main()
