@@ -235,11 +235,11 @@ O único envio existente é a aba **Enviar ao Meta**, na página Eventos Manuais
      telefone pra casar a conversão com o anúncio);
    - se ela **já foi enviada ao Meta antes** (por este botão ou pelo envio
      automático que existiu entre 15 e 16/09/2026).
-2. "Enviar ao Meta" pede confirmação — avisando quantas já tinham sido
-   enviadas — e manda o Purchase de todas as vendas da lista pro pixel padrão,
-   com o telefone hasheado (SHA-256).
-3. O resultado mostra quantas foram **aceitas pelo Meta** e quantas
-   **falharam, com o motivo** (ex: nenhum pixel padrão configurado). Trocar a
+2. "Enviar ao Meta" pede confirmação e manda o Purchase pro pixel padrão, com o
+   telefone hasheado (SHA-256). **Venda que o Meta já aceitou antes é pulada
+   automaticamente** — não conta a mesma conversão de novo.
+3. O resultado mostra quantas foram **aceitas pelo Meta**, quantas foram
+   puladas e quantas **falharam, com o motivo** (ex: nenhum pixel padrão configurado). Trocar a
    data esconde a lista, pra não enviar um dia diferente do que foi conferido.
 
 Por baixo, são as rotas `GET /api/eventos-manuais/vendas-para-meta?data=AAAA-MM-DD`

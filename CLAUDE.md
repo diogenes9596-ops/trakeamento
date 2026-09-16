@@ -114,7 +114,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **Limpeza automática de campanhas apagadas**: cron remove do banco campanha/conjunto/anúncio que sumiu de verdade do Meta (não conta pausado).
 - **Cotação do dólar fixa por dia**: ver Regras de negócio.
 - **Lançamento manual** (`/api/eventos-manuais/lancar-venda`, `/lancar-lead`): herda atribuição automaticamente se o telefone bater. Não envia nada ao Meta. No painel só existe o formulário de venda; `lancar-lead` e `reatribuir` são só API.
-- **Envio manual ao CAPI** — aba "Enviar ao Meta" em Eventos Manuais: escolhe o dia do pagamento, pré-visualiza as vendas aprovadas (`GET /api/eventos-manuais/vendas-para-meta`, marca quem tem `ctwa_clid` e quem **já foi aceita pelo Meta antes**, via `event_id` em `eventos_capi`), confirma e envia (`POST /enviar-vendas-meta`). O envio devolve enviadas × falhas com o motivo real — `enviarEventoCapi` retorna `{ ok, erro }`.
+- **Envio manual ao CAPI** — aba "Enviar ao Meta" em Eventos Manuais: escolhe o dia do pagamento, pré-visualiza as vendas aprovadas (`GET /api/eventos-manuais/vendas-para-meta`, marca quem tem `ctwa_clid` e quem **já foi aceita pelo Meta antes**, via `event_id` em `eventos_capi`), confirma e envia (`POST /enviar-vendas-meta`). **Venda já aceita pelo Meta é pulada automaticamente, sem aviso** (decisão do usuário, 16/09/2026). O envio devolve enviadas × puladas × falhas com o motivo real — `enviarEventoCapi` retorna `{ ok, erro }`.
 - **Sincronização sob demanda**: botão "🔄 Sincronizar agora" no painel = `POST /api/dashboard/sincronizar-agora` (mesmo ciclo do cron, na hora).
 - **Páginas do painel**: Overview, Campanhas (com drill-down Campanha→Conjunto→Anúncio), Criativos, Leads, Vendas, Eventos (log CAPI), Eventos Manuais, Configurações. **Agendamentos não é página**: é um dos filtros de status dentro de Vendas (`src/public/vendas.html`), junto com Aprovada, Pendente, Recusada, Cancelada e Reembolsada.
 
@@ -166,6 +166,12 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **`enviarEventoCapi` nunca lança exceção por recusa do Meta** — registra em `eventos_capi` e devolve `{ ok: false, erro }`. Quem chama tem que olhar o retorno; `try/catch` sozinho conta falha como sucesso.
 - **`UNIQUE(plataforma, id_externo)` é o que evita duplicata** — qualquer lançamento manual ou correção que não preencha esses dois campos com o valor real da plataforma de origem é candidato a duplicar quando o webhook de verdade chegar.
 - **Duplicatas por telefone não são sempre erro**: um mesmo cliente pode ter duas compras reais e distintas com valores diferentes no mesmo telefone — nunca deduplicar só por telefone batendo, sempre confirmar por `id_externo`/valor antes de apagar algo.
+
+---
+
+## Pendências abertas (não mexer sem o usuário)
+
+- **Venda `ven_158205`: `aprovada` aqui, "Aguardando Pagamento" na Skale.** Conferido na Skale em 16/09/2026: kit "3 MESES", R$ 483,00 (bate com o valor gravado), R$ 0,00 pago. Não se sabe se foi paga e depois estornada/revertida ou se foi marcada como paga por engano. **Não alterar valor nem status** até o usuário confirmar.
 
 ---
 
