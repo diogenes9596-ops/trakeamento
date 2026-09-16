@@ -453,12 +453,12 @@ async function abaWebhooks() {
 
     <div class="secao" style="margin-top:24px;">
       <h2>Erros no processamento</h2>
-      <p class="desc">Eventos que chegaram mas não viraram venda. O payload completo de cada evento fica guardado no banco (tabela <code>webhooks_recebidos</code>). Também aparece aqui evento que ficou mais de 5 minutos sem ser processado.</p>
+      <p class="desc">Eventos que chegaram mas não viraram venda (Skale) ou lead (DataCrazy). O payload completo de cada evento fica guardado no banco (tabela <code>webhooks_recebidos</code>). Também aparece aqui evento que ficou mais de 5 minutos sem ser processado.</p>
     </div>
     <div class="painel">
       <div class="tabela-scroll">
         <table>
-          <thead><tr><th>Recebido em</th><th>Webhook</th><th>Pedido</th><th>Situação</th><th>Erro</th></tr></thead>
+          <thead><tr><th>Recebido em</th><th>Webhook</th><th>Referência</th><th>Situação</th><th>Erro</th></tr></thead>
           <tbody id="corpoErrosWebhooks"><tr><td colspan="5">Carregando...</td></tr></tbody>
         </table>
       </div>

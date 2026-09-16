@@ -147,7 +147,7 @@ CREATE TABLE IF NOT EXISTS eventos_capi (
 -- nao aplica o schema.sql -- mantenha as duas definicoes iguais.
 CREATE TABLE IF NOT EXISTS webhooks_recebidos (
     id SERIAL PRIMARY KEY,
-    servico VARCHAR(30) NOT NULL,           -- 'skale'
+    servico VARCHAR(30) NOT NULL,           -- 'skale' | 'datacrazy'
     id_externo VARCHAR(255),
     status VARCHAR(20) NOT NULL DEFAULT 'recebido', -- 'recebido' | 'processado' | 'erro'
     erro TEXT,

@@ -1,11 +1,12 @@
 const pool = require('../db');
 
-// Registro de todo evento que chega nos webhooks, gravado ANTES de responder
-// "ok" pra plataforma (pedido do usuario em 16/09/2026). Antes o webhook da
-// Skale respondia "ok" e so depois gravava a venda: se o banco falhasse nesse
-// intervalo, a Skale achava que tinha entregado e a venda sumia sem rastro
-// (so uma linha no log do Railway). Agora o payload fica guardado aqui, e o
-// que der errado no processamento aparece em Configuracoes > Webhooks.
+// Registro de todo evento que chega nos webhooks da Skale (vendas) e do
+// DataCrazy (leads), gravado ANTES de responder "ok" pra plataforma (pedido do
+// usuario em 16/09/2026). Antes os dois respondiam "ok" e so depois gravavam:
+// se o banco falhasse nesse intervalo, a plataforma achava que tinha entregado
+// e a venda/lead sumia sem rastro (so uma linha no log do Railway). Agora o
+// payload fica guardado aqui, e o que der errado no processamento aparece em
+// Configuracoes > Webhooks. (Payt ficou como estava, por decisao do usuario.)
 //
 // status: 'recebido'   -> gravado, ainda nao processado
 //         'processado' -> venda gravada/atualizada
