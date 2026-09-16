@@ -156,6 +156,22 @@ async function main() {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   })).status;
 
+  // Tabela ou coluna inexistente (codigo antigo) conta como "nao achou", pra
+  // falhar so a verificacao em vez de derrubar o teste inteiro.
+  async function primeiraLinha(sql, params = []) {
+    try { return (await pool.query(sql, params)).rows[0] || null; } catch (e) { return null; }
+  }
+
+  async function esperarLinha(sql, params, condicao = () => true, limiteMs = 10000) {
+    const inicio = Date.now();
+    while (Date.now() - inicio < limiteMs) {
+      const linha = await primeiraLinha(sql, params);
+      if (linha && condicao(linha)) return linha;
+      await dormir(100);
+    }
+    return null;
+  }
+
   async function esperarVenda(idExterno, condicao = () => true, limiteMs = 60000) {
     const inicio = Date.now();
     while (Date.now() - inicio < limiteMs) {
@@ -175,7 +191,16 @@ async function main() {
     transaction: { payment_status: 'Pago', payment_method: 'Antecipada', total_price: 29700, paid_at_data: '2026-09-16', paid_at_hora: '14:30:00' },
   };
   checar('webhook da Skale responde 200', (await postarSkale(pedidoA)) === 200);
+  // Consultado logo depois do "ok": o payload tem que ja estar gravado
+  const registroA = await primeiraLinha(
+    `SELECT id FROM webhooks_recebidos WHERE servico = 'skale' AND payload->>'transaction_id' = 'ven_TESTE01' ORDER BY id LIMIT 1`
+  );
+  checar('payload gravado antes de responder "ok" pra Skale', registroA);
   const { venda: a, ms } = await esperarVenda('ven_TESTE01');
+  const registroAProcessado = registroA && await esperarLinha(
+    `SELECT status, id_externo FROM webhooks_recebidos WHERE id = $1`, [registroA.id], r => r.status !== 'recebido');
+  checar('evento processado fica marcado como processado', registroAProcessado?.status === 'processado' && registroAProcessado?.id_externo === 'ven_TESTE01',
+    registroAProcessado && `${registroAProcessado.status} / ${registroAProcessado.id_externo}`);
   checar('venda gravada e atribuida em ate 1 minuto', a, `${ms} ms`);
   if (a) {
     checar('status = aprovada', a.status === 'aprovada', a.status);
@@ -191,13 +216,23 @@ async function main() {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: envTeste.ADMIN_EMAIL, senha: envTeste.ADMIN_PASSWORD }),
   });
+  // Le o corpo antes de seguir, como a tela de login faz: o express-session so
+  // termina de gravar a sessao no banco ao fechar a resposta, e o fetch resolve
+  // ja nos cabecalhos. Sem isso, a requisicao seguinte as vezes chegava antes
+  // da sessao existir (302 pro login) -- o teste falhava em ~1 de 3 execucoes.
+  await login.text();
   const cookie = (login.headers.get('set-cookie') || '').split(';')[0];
-  checar('login no painel', login.ok);
+  checar('login no painel', login.ok && cookie.startsWith('connect.sid='), `${login.status}, cookie ${cookie ? 'recebido' : 'AUSENTE'}`);
   const api = (rota, opcoes = {}) => fetch(`${BASE}${rota}`, {
     ...opcoes, headers: { 'Content-Type': 'application/json', cookie, ...(opcoes.headers || {}) },
   });
 
-  const vendas = await (await api('/api/dashboard/vendas?origem=skale&status=aprovada&data_inicio=2026-09-16&data_fim=2026-09-16')).json();
+  const respVendas = await api('/api/dashboard/vendas?origem=skale&status=aprovada&data_inicio=2026-09-16&data_fim=2026-09-16', { redirect: 'manual' });
+  const textoVendas = await respVendas.text();
+  let vendas = null;
+  try { vendas = JSON.parse(textoVendas); } catch (e) { /* registrado na verificacao abaixo */ }
+  checar('sessao do login vale na requisicao seguinte', Array.isArray(vendas),
+    Array.isArray(vendas) ? undefined : `${respVendas.status} ${respVendas.headers.get('location') || ''} ${textoVendas.slice(0, 80)}`);
   const naTela = Array.isArray(vendas) && vendas.find(v => v.id_externo === 'ven_TESTE01');
   checar('aparece na aba Vendas (Skale + Aprovada, dia do pagamento)', naTela);
   checar('aba Vendas mostra o nome do anuncio certo', naTela && naTela.ad_name === 'Anuncio Teste Novo', naTela && naTela.ad_name);
@@ -255,6 +290,26 @@ async function main() {
   checar('webhook: telefone DDD 55 sem DDI ganha o 55', g && g.telefone === '555532221234', g && g.telefone);
   checar('webhook: paid_at sem fuso lido como Brasilia (servidor em UTC)',
     g && new Date(g.recebido_em).toISOString() === '2026-09-16T01:30:00.000Z', g && new Date(g.recebido_em).toISOString());
+
+  // Evento que nao vira venda: o payload fica guardado e a falha registrada
+  checar('evento sem transaction_id: a Skale recebe "ok" (payload ficou guardado)',
+    (await postarSkale({ event: 'order_updated', customer: { name: 'Sem Id' }, transaction: { payment_status: 'Pago' } })) === 200);
+  const semId = await esperarLinha(
+    `SELECT status, erro FROM webhooks_recebidos WHERE servico = 'skale' AND payload->'customer'->>'name' = 'Sem Id'`, [], r => r.status !== 'recebido');
+  checar('evento sem transaction_id fica registrado como erro, com o motivo',
+    semId?.status === 'erro' && /transaction_id/.test(semId?.erro || ''), semId && `${semId.status}: ${semId.erro}`);
+
+  // Falha do banco ao gravar a venda (id maior que a coluna aceita)
+  const idGigante = 'ven_' + 'X'.repeat(300);
+  await postarSkale({ event: 'order_updated', transaction_id: idGigante, transaction: { payment_status: 'Pago', total_price: 100 } });
+  const falhaBanco = await esperarLinha(
+    `SELECT status, erro, id_externo FROM webhooks_recebidos WHERE servico = 'skale' AND payload->>'transaction_id' = $1`, [idGigante], r => r.status !== 'recebido');
+  checar('falha do banco ao gravar a venda fica registrada como erro',
+    falhaBanco?.status === 'erro' && !!falhaBanco?.erro && falhaBanco?.id_externo?.length === 255, falhaBanco && `${falhaBanco.status}: ${falhaBanco.erro}`);
+  const listaErros = await (await api('/api/webhooks-config/erros')).json().catch(() => null);
+  checar('as duas falhas aparecem no log de erros do painel (e o evento processado nao)',
+    Array.isArray(listaErros) && listaErros.length === 2 && listaErros.every(e => e.servico === 'skale' && e.status === 'erro'),
+    Array.isArray(listaErros) ? `${listaErros.length} item(ns)` : JSON.stringify(listaErros));
 
   // === 4. Lancamento manual: id real, 409 em duplicata, sem envio ao Meta ===
   const manual = await api('/api/eventos-manuais/lancar-venda', {
@@ -330,6 +385,22 @@ async function main() {
     `${envio.puladas?.length} pulada(s)`);
   // Controle: a rota de envio chama o CAPI (3 vezes, a pulada nao) -- prova que o detector acima enxerga chamadas.
   checar('controle: o detector enxerga o envio manual, sem a venda pulada', chamadasCapi() === 3, `${chamadasCapi()} chamada(s)`);
+
+  // === 7. Sem conseguir gravar o payload (tabela indisponivel) ===
+  // Fica por ultimo porque apaga a tabela. O webhook tem que gravar a venda
+  // ANTES de responder "ok"; se nem a venda puder ser gravada, responde 500.
+  await pool.query('DROP TABLE IF EXISTS webhooks_recebidos');
+  const statusSemTabela = await postarSkale({
+    event: 'order_updated', transaction_id: 'ven_TESTE09',
+    customer: { name: 'Sem Tabela', phone: '11944440009' }, product: { name: '1 MES' },
+    transaction: { payment_status: 'Pago', payment_method: 'Antecipada', total_price: 19700, paid_at_data: '2026-09-14', paid_at_hora: '10:00:00' },
+  });
+  // consultado logo depois da resposta, sem esperar
+  const vendaSemTabela = (await pool.query(`SELECT status FROM sales WHERE id_externo = 'ven_TESTE09'`)).rows[0];
+  checar('sem gravar o payload: so responde "ok" depois de gravar a venda',
+    statusSemTabela === 200 && vendaSemTabela?.status === 'aprovada', `${statusSemTabela}, venda ${vendaSemTabela ? vendaSemTabela.status : 'NAO gravada'}`);
+  const statusSemNada = await postarSkale({ event: 'order_updated', transaction: { payment_status: 'Pago' } });
+  checar('sem gravar o payload nem a venda: responde 500, a Skale fica sabendo', statusSemNada === 500, statusSemNada);
 }
 
 main()
@@ -338,6 +409,11 @@ main()
     if (servidor) servidor.kill();
     if (pool) await pool.end().catch(() => {});
     const falhas = resultados.filter(r => !r.ok).length;
+    if (falhas && logServidor) {
+      // Pra diagnosticar sem precisar rodar de novo (inclusive quando o hook barra um push)
+      console.log('\n--- fim do log do servidor de teste ---');
+      console.log(logServidor.split('\n').slice(-40).join('\n'));
+    }
     console.log(`\n${resultados.length - falhas}/${resultados.length} verificacoes passaram.`);
     process.exit(falhas || resultados.length === 0 ? 1 : 0);
   });
