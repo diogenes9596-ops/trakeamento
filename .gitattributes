@@ -1,0 +1,3 @@
+# Hooks do Git sao scripts sh: com final de linha CRLF (padrao do Git no
+# Windows) eles quebram. Forca LF nessa pasta em qualquer maquina.
+.githooks/* text eol=lf

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Roda o teste de aceite antes de todo push. Se falhar, o push e cancelado --
+# nada chega em producao (o Railway publica cada push em main) sem passar.
+#
+# Precisa do PostgreSQL local rodando e do .env na raiz (ver README, "Testes").
+# Ativar num clone novo: git config core.hooksPath .githooks
+
+NODE_BIN=$(command -v node 2>/dev/null)
+if [ -z "$NODE_BIN" ] && [ -x "/c/Program Files/nodejs/node.exe" ]; then
+  NODE_BIN="/c/Program Files/nodejs/node.exe"
+fi
+if [ -z "$NODE_BIN" ]; then
+  echo "pre-push: Node nao encontrado -- push cancelado."
+  exit 1
+fi
+
+echo "pre-push: rodando o teste de aceite..."
+if ! "$NODE_BIN" test/aceite.js; then
+  echo ""
+  echo "pre-push: teste de aceite FALHOU -- push cancelado."
+  exit 1
+fi
