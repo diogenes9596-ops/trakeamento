@@ -62,6 +62,9 @@ src/
     metaCapiService.js      # envio de eventos Lead/Purchase pro Meta CAPI
     fxService.js            # cotação do dólar (cache por dia, ver "Armadilhas")
     webhookSecretsService.js
+  utils/
+    telefone.js            # normalizarTelefoneBR: só dígitos + DDI 55 (decide pelo tamanho, ver Armadilhas)
+    datas.js               # hojeEmBrasilia, diasAtrasEmBrasilia, instanteDeBrasilia -- toda data de calendário passa por aqui
   routes/
     dashboard.js            # rotas do painel (vendas, campanhas, leads, overview, sincronizar-agora)
     eventosManuais.js       # lançamento manual de venda/lead, envio manual ao CAPI
@@ -113,7 +116,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **Meta CAPI**: só manual, pelo botão "Enviar ao Meta" (ver Envio manual abaixo). Nenhum webhook envia, e `lancar-venda` também não (desde 16/09/2026).
 - **Limpeza automática de campanhas apagadas**: cron remove do banco campanha/conjunto/anúncio que sumiu de verdade do Meta (não conta pausado).
 - **Cotação do dólar fixa por dia**: ver Regras de negócio.
-- **Lançamento manual** (`/api/eventos-manuais/lancar-venda`, `/lancar-lead`): herda atribuição automaticamente se o telefone bater. Não envia nada ao Meta. No painel só existe o formulário de venda; `lancar-lead` e `reatribuir` são só API.
+- **Lançamento manual** (`/api/eventos-manuais/lancar-venda`, `/lancar-lead`): herda atribuição automaticamente se o telefone bater. Venda só com data (sem hora) vai pra **23:59:59 -03:00** daquele dia, pra atribuir qualquer lead chegado no mesmo dia; data fora do formato AAAA-MM-DD responde 400. Não envia nada ao Meta. No painel só existe o formulário de venda; `lancar-lead` e `reatribuir` são só API.
 - **Envio manual ao CAPI** — aba "Enviar ao Meta" em Eventos Manuais: escolhe o dia do pagamento, pré-visualiza as vendas aprovadas (`GET /api/eventos-manuais/vendas-para-meta`, marca quem tem `ctwa_clid` e quem **já foi aceita pelo Meta antes**, via `event_id` em `eventos_capi`), confirma e envia (`POST /enviar-vendas-meta`). **Venda já aceita pelo Meta é pulada automaticamente, sem aviso** (decisão do usuário, 16/09/2026). O envio devolve enviadas × puladas × falhas com o motivo real — `enviarEventoCapi` retorna `{ ok, erro }`.
 - **Sincronização sob demanda**: botão "🔄 Sincronizar agora" no painel = `POST /api/dashboard/sincronizar-agora` (mesmo ciclo do cron, na hora).
 - **Páginas do painel**: Overview, Campanhas (com drill-down Campanha→Conjunto→Anúncio), Criativos, Leads, Vendas, Eventos (log CAPI), Eventos Manuais, Configurações. **Agendamentos não é página**: é um dos filtros de status dentro de Vendas (`src/public/vendas.html`), junto com Aprovada, Pendente, Recusada, Cancelada e Reembolsada.
@@ -130,7 +133,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
    - recusado → `recusada`; cancelado/estornado/chargeback → `cancelada`
 3. **Meta CAPI: NUNCA automático, em nenhuma integração** (Skale, Payt, DataCrazy). A Skale ficou automática só de 15/09 a 16/09/2026 e foi desligada de novo a pedido do usuário, voltando à regra original. Lançar venda manual também não envia (desde 16/09/2026): **nada dispara pro Meta como efeito colateral de outra ação**. O único envio é o botão "Enviar ao Meta" (Eventos Manuais); a aba Eventos e o cadastro de pixels continuam existindo. Não religue envio automático em lugar nenhum sem pedido explícito (ver Armadilhas).
 4. **Cotação do dólar fixa por dia, nunca recalculada depois de definida.** Cada dia trava seu próprio valor na primeira vez que é consultado.
-5. **Campanha/conjunto/anúncio apagado de verdade no Meta some do painel automaticamente; pausado continua aparecendo.**
+5. **Campanha/conjunto/anúncio apagado de verdade no Meta some do painel automaticamente; pausado continua aparecendo.** A venda atribuída a um anúncio apagado continua com o `ad_id`, e a aba Vendas mostra **só o ID** do anúncio (decisão do usuário, 16/09/2026 — guardar o nome no histórico ficou pra depois).
 6. **Vendas de afiliado da Payt fora da whitelist de `atendentes` são ignoradas** pelo webhook.
 7. **Lançamento manual de venda deve sempre usar o `id_externo` real da Skale** (`ven_XXXXXX`, `plataforma='skale'`) quando o pedido existir lá — nunca inventar um ID (`manual_...`). Isso já causou dezenas de duplicatas quando o webhook real chegava depois com um ID diferente do que foi inventado.
 8. **Login único** — tokens do Meta e dos pixels nunca aparecem completos na UI.
@@ -156,7 +159,9 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **Sempre `git fetch` antes de editar.** Já houve arquivo local corrompido sem nenhuma ação explícita (import duplicado, rota truncada) e `main` alterado pelo GitHub web durante uma sessão. `git status` e `git diff origin/main` mostram na hora se o local divergiu.
 - **Editar pelo GitHub web piora a codificação dos acentos a cada salvamento**: comentários antigos já aparecem como `sÃÂ³` e ganham mais uma camada a cada edição web. Por isso comentários novos em `.js` são escritos sem acento.
 - **Telefone brasileiro**: sempre comparar por últimos 9 E últimos 8 dígitos. Uma fonte pode mandar com o "9" do celular, outra sem.
+- **DDI 55 e DDD 55 (Rio Grande do Sul) são o mesmo "55"**: a regra "se não começa com 55, coloca 55" gravava celular do RS sem DDI. Pra gravar telefone, use sempre `normalizarTelefoneBR` (`src/utils/telefone.js`), que decide pelo tamanho (10/11 dígitos = sem DDI). Vendas gravadas antes de 16/09/2026 podem ter telefone do RS sem DDI — a atribuição não sofre (compara os últimos dígitos), só o hash enviado ao Meta.
 - **Datas sem hora exata**: nunca faça fallback pra meia-noite sem `-03:00` explícito — isso já quebrou tanto a atribuição (lead parecia vir "depois" da venda) quanto a data de exibição no painel (venda caindo no dia errado dependendo do fuso da comparação).
+- **O servidor de produção roda em UTC.** `toISOString()` dá a data em UTC (depois das 21h de Brasília já é amanhã) e texto de data/hora sem fuso é lido em UTC. Use `src/utils/datas.js` pra "hoje" e pra interpretar data/hora; o teste de aceite roda o servidor com `TZ=UTC` justamente pra pegar isso. No SQL o fuso já está certo: o pool fixa `America/Sao_Paulo` (`src/db.js`).
 - **`fx_rates` pode ficar vazia mesmo com a função de salvar existindo** — `salvarCotacaoDoDia` só é chamada pela rota manual `/api/fx/dia`; a função de leitura (`obterCotacaoParaData`) precisa *também* chamar o save após buscar ao vivo, senão a "cotação do dia" nunca fica fixa de verdade (bug real, já corrigido, mas fique atento se reaparecer numa refatoração).
 - **CAPI automático "vazando"**: hoje está desligado nas três integrações (Skale, Payt, DataCrazy). Se um dia alguém ligar ou desligar numa delas, confira as outras duas — elas não sincronizam sozinhas, e já houve envio automático continuando num webhook que se achava desligado.
 - **`action_source: 'business_messaging'` + `messaging_channel: 'whatsapp'` derrubou 100% dos envios ao CAPI** (Meta respondia "Invalid parameter") da noite de 15/09 até a reversão em 16/09/2026. Não tentar de novo sem antes descobrir o formato/endpoint correto e testar com `test_event_code`, que manda o evento só pra área de testes do Gerenciador.

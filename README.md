@@ -174,6 +174,13 @@ opção não muda nada por enquanto: o que sai daqui é sempre Purchase.
   que prefixa celular no Brasil às vezes vem de um lado e não do outro (a Skale
   manda com, o DataCrazy manda sem) — comparar só por 9 dígitos fazia dois
   números da mesma pessoa nunca baterem.
+- O telefone é **gravado** só com dígitos e com o DDI 55. Número de 10 ou 11
+  dígitos (DDD + número) ganha o 55; os demais ficam como vieram. A decisão é
+  pelo tamanho porque o DDI do Brasil e o DDD do Rio Grande do Sul são os dois
+  "55" — a regra antiga ("não começa com 55? coloca 55") deixava celular do RS
+  sem DDI.
+- Venda manual lançada **só com a data** vai pras 23:59:59 (Brasília) daquele
+  dia, pra casar com qualquer lead que chegou no mesmo dia.
 - Se houver mais de um lead na janela, vale o **mais recente**.
 - Achou → credita o `ad_id` daquele lead na venda (aparece como "MATCH" na aba
   Vendas). Não achou → a venda fica "sem atribuição" (pode ser orgânico,
@@ -278,6 +285,8 @@ Por baixo, são as rotas `GET /api/eventos-manuais/vendas-para-meta?data=AAAA-MM
 - **Leads** — leads recebidos, com o anúncio de origem.
 - **Vendas** — lista com filtro por origem e por status; **Agendamento é um
   desses filtros, dentro da própria página de Vendas**, não uma página à parte.
+  Se o anúncio de uma venda atribuída foi apagado no Meta, a coluna Anúncio
+  mostra o **ID** dele no lugar do nome.
 - **Eventos** — log de tudo que foi enviado ao Meta via CAPI.
 - **Eventos Manuais** — três abas: lançar venda manual (sem envio ao Meta),
   cadastro dos produtos do dropdown e **Enviar ao Meta** (seção 7). Lançar lead
