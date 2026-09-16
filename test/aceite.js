@@ -365,6 +365,38 @@ async function main() {
   });
   checar('manual: data em formato invalido responde 400', dataRuim.status === 400, dataRuim.status);
 
+  // Correcao de telefone sem DDI pelo painel (usuario sem acesso ao banco).
+  // ven_TESTE10 replica o caso real: gravado sem DDI, original da Skale com DDI.
+  await pool.query(
+    `INSERT INTO sales (plataforma, id_externo, status, telefone, valor, payload_bruto) VALUES
+       ('skale', 'ven_TESTE10', 'desconhecido', '55996471391', 773, '{"customer":{"phone":"5555996471391"}}'),
+       ('skale', 'ven_TESTE11', 'desconhecido', '55944448888', 100, '{"customer":{"phone":"94444-8888"}}')`
+  );
+  const corrigirTelefone = (idExterno, corpo) => api(`/api/dashboard/vendas-skale/${idExterno}/corrigir-telefone`,
+    { method: 'POST', body: JSON.stringify(corpo || {}) });
+  const telefoneDe = async idExterno => (await primeiraLinha(`SELECT telefone FROM sales WHERE id_externo = $1`, [idExterno]))?.telefone;
+
+  const conferir = await corrigirTelefone('ven_TESTE10');
+  const conferirJson = await conferir.json().catch(() => null);
+  checar('corrigir telefone: sem confirmar so confere e nao altera',
+    conferir.status === 200 && conferirJson?.situacao === 'pode_corrigir' && (await telefoneDe('ven_TESTE10')) === '55996471391',
+    conferirJson?.situacao || conferir.status);
+  const semLogin = await fetch(`${BASE}/api/dashboard/vendas-skale/ven_TESTE10/corrigir-telefone`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmar: true }), redirect: 'manual',
+  });
+  checar('corrigir telefone: sem login nao altera nada', semLogin.status !== 200 && (await telefoneDe('ven_TESTE10')) === '55996471391', semLogin.status);
+  const aplicar = await corrigirTelefone('ven_TESTE10', { confirmar: true });
+  const aplicarJson = await aplicar.json().catch(() => null);
+  checar('corrigir telefone: com confirmar grava o telefone original da Skale',
+    aplicar.status === 200 && aplicarJson?.alterado === true && (await telefoneDe('ven_TESTE10')) === '5555996471391', await telefoneDe('ven_TESTE10'));
+  const deNovo = await (await corrigirTelefone('ven_TESTE10', { confirmar: true })).json().catch(() => null);
+  checar('corrigir telefone: rodar de novo nao altera (ja estava certo)',
+    deNovo?.situacao === 'ja_estava_certo' && deNovo?.alterado === false, deNovo?.situacao);
+  const semDdd = await corrigirTelefone('ven_TESTE11', { confirmar: true });
+  checar('corrigir telefone: numero que veio sem DDD e recusado (422) e nao muda',
+    semDdd.status === 422 && (await telefoneDe('ven_TESTE11')) === '55944448888', semDdd.status);
+  checar('corrigir telefone: venda inexistente responde 404', (await corrigirTelefone('ven_NAO_EXISTE')).status === 404);
+
   // Toda chamada ao CAPI sem pixel escreve essa linha no log do servidor.
   const chamadasCapi = () => (logServidor.match(/Nenhum pixel default configurado/g) || []).length;
   await dormir(500);
