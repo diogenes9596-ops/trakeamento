@@ -53,6 +53,9 @@ const envTeste = {
   ADMIN_EMAIL: 'aceite@teste.local',
   ADMIN_PASSWORD: 'teste-aceite-local', // usuario do banco descartavel de teste
   JANELA_ATRIBUICAO_HORAS: '720',
+  // Mesmo fuso do Railway. Sem isso, nesta maquina (fuso de Brasilia) um bug
+  // de "data sem fuso" passaria despercebido no teste.
+  TZ: 'UTC',
 };
 
 const resultados = [];
@@ -70,7 +73,46 @@ let servidor;
 let logServidor = '';
 let pool;
 
+function carregarUtil(nome) {
+  try {
+    return require(path.join(REPO, 'src', 'utils', nome));
+  } catch (err) {
+    checar(`modulo src/utils/${nome}.js existe`, false, err.message.split('\n')[0]);
+    return null;
+  }
+}
+
+function verificarRegrasPuras() {
+  const telefone = carregarUtil('telefone');
+  const datas = carregarUtil('datas');
+  if (!telefone || !datas) return;
+
+  const { normalizarTelefoneBR } = telefone;
+  const casosTelefone = [
+    ['(55) 99123-4567', '5555991234567', 'celular DDD 55 (RS) sem DDI'],
+    ['(55) 3222-1234', '555532221234', 'fixo DDD 55 (RS) sem DDI'],
+    ['+55 55 99123-4567', '5555991234567', 'celular DDD 55 com DDI'],
+    ['+55 (11) 98765-0001', '5511987650001', 'celular DDD 11 com DDI'],
+    ['11987650001', '5511987650001', 'celular DDD 11 sem DDI'],
+    ['', null, 'vazio'],
+  ];
+  for (const [entrada, esperado, nome] of casosTelefone) {
+    const obtido = normalizarTelefoneBR(entrada);
+    checar(`telefone: ${nome}`, obtido === esperado, `${entrada || '(vazio)'} -> ${obtido}`);
+  }
+
+  const { hojeEmBrasilia, diasAtrasEmBrasilia, instanteDeBrasilia } = datas;
+  const noite = new Date('2026-09-17T01:30:00Z'); // 16/09 22:30 em Brasilia, ja 17/09 em UTC
+  checar('"hoje" as 22:30 de Brasilia continua sendo o mesmo dia', hojeEmBrasilia(noite) === '2026-09-16', hojeEmBrasilia(noite));
+  checar('"7 dias atras" contado em Brasilia', diasAtrasEmBrasilia(7, noite) === '2026-09-09', diasAtrasEmBrasilia(7, noite));
+  checar('data/hora sem fuso e lida como Brasilia', instanteDeBrasilia('2026-09-16 22:30:00')?.toISOString() === '2026-09-17T01:30:00.000Z',
+    instanteDeBrasilia('2026-09-16 22:30:00')?.toISOString());
+  checar('data/hora com fuso e respeitada', instanteDeBrasilia('2026-09-16T22:30:00Z')?.toISOString() === '2026-09-16T22:30:00.000Z');
+}
+
 async function main() {
+  verificarRegrasPuras();
+
   // --- banco novo a cada execucao ---
   const admin = new Pool({ connectionString: urlAdmin.toString() });
   await admin.query(`DROP DATABASE IF EXISTS ${BANCO_TESTE} WITH (FORCE)`);
@@ -104,6 +146,8 @@ async function main() {
   await pool.query(`INSERT INTO leads (telefone, ad_id, ctwa_clid, recebido_em) VALUES ('551187650001', 'AD_TESTE_NOVO', 'CLID_TESTE', $1)`, [diasAntes(10)]);
   // Cliente B: unico lead ha 35 dias -- fora da janela de 30.
   await pool.query(`INSERT INTO leads (telefone, ad_id, recebido_em) VALUES ('5511912340002', 'AD_FORA_JANELA', $1)`, [diasAntes(35)]);
+  // Cliente do RS (DDD 55): lead no MESMO dia da venda manual, as 15h
+  await pool.query(`INSERT INTO leads (telefone, ad_id, recebido_em) VALUES ('5555991234567', 'AD_MESMO_DIA', '2026-09-16T15:00:00-03:00')`);
 
   const token = (await pool.query(`SELECT secret FROM webhook_secrets WHERE servico = 'skale'`)).rows[0]?.secret;
   checar('secret do webhook da Skale existe', token);
@@ -200,6 +244,18 @@ async function main() {
   const { venda: e } = await esperarVenda('ven_TESTE05');
   checar('pagamento recusado com "Pago" em outro campo vira recusada, nunca aprovada', e && e.status === 'recusada', e && e.status);
 
+  // Telefone DDD 55 sem DDI + pagamento so com paid_at (sem fuso no texto).
+  // Servidor em UTC: "2026-09-15 22:30:00" tem que ser 22:30 de Brasilia.
+  await postarSkale({
+    event: 'order_updated', transaction_id: 'ven_TESTE07',
+    customer: { name: 'Cliente RS Fixo', phone: '(55) 3222-1234' }, product: { name: '1 MES' },
+    transaction: { payment_status: 'Pago', payment_method: 'Antecipada', total_price: 19700, paid_at: '2026-09-15 22:30:00' },
+  });
+  const { venda: g } = await esperarVenda('ven_TESTE07');
+  checar('webhook: telefone DDD 55 sem DDI ganha o 55', g && g.telefone === '555532221234', g && g.telefone);
+  checar('webhook: paid_at sem fuso lido como Brasilia (servidor em UTC)',
+    g && new Date(g.recebido_em).toISOString() === '2026-09-16T01:30:00.000Z', g && new Date(g.recebido_em).toISOString());
+
   // === 4. Lancamento manual: id real, 409 em duplicata, sem envio ao Meta ===
   const manual = await api('/api/eventos-manuais/lancar-venda', {
     // data fixa: sem ela a venda cairia no dia em que o teste roda
@@ -212,6 +268,23 @@ async function main() {
     method: 'POST', body: JSON.stringify({ id_externo: 'ven_TESTE01', telefone: '11987650001', valor: '1' }),
   });
   checar('lancar ID que ja existe responde 409', dup.status === 409, dup.status);
+
+  // Venda manual so com data, cliente do RS (DDD 55) sem DDI, com lead as 15h
+  // do mesmo dia. A venda vai pra 23:59:59 -03:00, entao o lead e atribuido
+  // (com o horario antigo, 09:00 de Brasilia, o lead "vinha depois").
+  const mesmoDia = await api('/api/eventos-manuais/lancar-venda', {
+    method: 'POST', body: JSON.stringify({ id_externo: 'ven_TESTE06', telefone: '55991234567', nome: 'Cliente RS', valor: '100', data: '2026-09-16' }),
+  });
+  const md = await mesmoDia.json();
+  checar('manual: telefone DDD 55 sem DDI ganha o 55', md.telefone === '5555991234567', md.telefone);
+  checar('manual: venda so com data vai pra 23:59:59 de Brasilia',
+    md.recebido_em && new Date(md.recebido_em).toISOString() === '2026-09-17T02:59:59.000Z', md.recebido_em && new Date(md.recebido_em).toISOString());
+  const md2 = (await pool.query(`SELECT ad_id FROM sales WHERE id_externo = 'ven_TESTE06'`)).rows[0];
+  checar('manual: lead do mesmo dia (15h) e atribuido', md2 && md2.ad_id === 'AD_MESMO_DIA', md2 && md2.ad_id);
+  const dataRuim = await api('/api/eventos-manuais/lancar-venda', {
+    method: 'POST', body: JSON.stringify({ id_externo: 'ven_TESTE08', telefone: '11900000008', valor: '1', data: '16/09/2026' }),
+  });
+  checar('manual: data em formato invalido responde 400', dataRuim.status === 400, dataRuim.status);
 
   // Toda chamada ao CAPI sem pixel escreve essa linha no log do servidor.
   const chamadasCapi = () => (logServidor.match(/Nenhum pixel default configurado/g) || []).length;
@@ -238,7 +311,7 @@ async function main() {
   );
   const prev = await (await api('/api/eventos-manuais/vendas-para-meta?data=2026-09-16')).json();
   const ids = (prev.vendas || []).map(v => v.id_externo).sort();
-  checar('pre-visualizacao lista so as aprovadas do dia', JSON.stringify(ids) === JSON.stringify(['ven_TESTE01', 'ven_TESTE02', 'ven_TESTE03']), ids.join(', '));
+  checar('pre-visualizacao lista so as aprovadas do dia', JSON.stringify(ids) === JSON.stringify(['ven_TESTE01', 'ven_TESTE02', 'ven_TESTE03', 'ven_TESTE06']), ids.join(', '));
   const pA = (prev.vendas || []).find(v => v.id_externo === 'ven_TESTE01');
   const pB = (prev.vendas || []).find(v => v.id_externo === 'ven_TESTE02');
   checar('pre-visualizacao marca quem tem clique do anuncio (ctwa_clid)', pA?.tem_ctwa_clid === true && pB?.tem_ctwa_clid === false);
@@ -250,13 +323,13 @@ async function main() {
   // contava como "enviado" mesmo sem enviar nada. A venda ja aceita pelo Meta
   // (ven_TESTE02) e pulada, sem tentar enviar.
   const envio = await (await api('/api/eventos-manuais/enviar-vendas-meta', { method: 'POST', body: JSON.stringify({ data: '2026-09-16' }) })).json();
-  checar('envio sem pixel: 0 enviadas e 2 falhas com o motivo',
-    envio.enviados?.length === 0 && envio.falhas?.length === 2 && envio.falhas.every(f => /pixel/i.test(f.erro)),
+  checar('envio sem pixel: 0 enviadas e 3 falhas com o motivo',
+    envio.enviados?.length === 0 && envio.falhas?.length === 3 && envio.falhas.every(f => /pixel/i.test(f.erro)),
     `${envio.enviados?.length} enviadas, ${envio.falhas?.length} falhas`);
   checar('envio pula a venda ja aceita pelo Meta', envio.puladas?.length === 1 && envio.puladas[0].nome === 'Cliente Teste B',
     `${envio.puladas?.length} pulada(s)`);
-  // Controle: a rota de envio chama o CAPI (2 vezes, a pulada nao) -- prova que o detector acima enxerga chamadas.
-  checar('controle: o detector enxerga o envio manual, sem a venda pulada', chamadasCapi() === 2, `${chamadasCapi()} chamada(s)`);
+  // Controle: a rota de envio chama o CAPI (3 vezes, a pulada nao) -- prova que o detector acima enxerga chamadas.
+  checar('controle: o detector enxerga o envio manual, sem a venda pulada', chamadasCapi() === 3, `${chamadasCapi()} chamada(s)`);
 }
 
 main()
