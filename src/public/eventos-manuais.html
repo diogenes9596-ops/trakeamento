@@ -276,11 +276,15 @@ async function carregarVendasParaMeta() {
   }
 
   const jaEnviadas = r.vendas.filter(v => v.ja_enviada).length;
+  const aEnviar = r.vendas.length - jaEnviadas;
   const total = r.vendas.reduce((s, v) => s + Number(v.valor || 0), 0);
   msg.textContent = '';
   document.getElementById('tituloVendasMeta').textContent =
     `${r.vendas.length} venda(s) aprovada(s) em ${dataBR(r.data)} — ${formatarMoeda(total)}` +
-    (jaEnviadas ? ` · ${jaEnviadas} já enviada(s) antes` : '');
+    (jaEnviadas ? ` · ${jaEnviadas} já enviada(s) antes, será(ão) pulada(s)` : '');
+  const btn = document.getElementById('btnEnviarMeta');
+  btn.disabled = aEnviar === 0;
+  btn.textContent = aEnviar === 0 ? 'Nada novo pra enviar' : `Enviar ${aEnviar} ao Meta`;
   document.getElementById('corpoVendasMeta').innerHTML = r.vendas.map(v => `
     <tr>
       <td>${escaparHtml(v.nome_cliente) || '--'}</td>
@@ -288,18 +292,19 @@ async function carregarVendasParaMeta() {
       <td>${escaparHtml(v.plataforma)}</td>
       <td>${formatarMoeda(v.valor)}</td>
       <td><span class="badge ${v.tem_ctwa_clid ? 'bom' : 'neutro'}">${v.tem_ctwa_clid ? 'SIM' : 'NÃO'}</span></td>
-      <td><span class="badge ${v.ja_enviada ? 'alerta' : 'neutro'}">${v.ja_enviada ? 'JÁ ENVIADA' : 'NÃO'}</span></td>
+      <td><span class="badge ${v.ja_enviada ? 'alerta' : 'neutro'}">${v.ja_enviada ? 'JÁ ENVIADA — PULA' : 'NÃO'}</span></td>
     </tr>
   `).join('');
   painel.style.display = '';
 }
 
 async function enviarVendasMeta() {
-  if (!previewMeta || previewMeta.vendas.length === 0) return;
+  if (!previewMeta) return;
   const { data, vendas } = previewMeta;
-  const jaEnviadas = vendas.filter(v => v.ja_enviada).length;
-  const aviso = jaEnviadas ? `\n\nATENÇÃO: ${jaEnviadas} dessas vendas já foram enviadas ao Meta antes e serão enviadas de novo.` : '';
-  if (!confirm(`Enviar ${vendas.length} venda(s) aprovada(s) de ${dataBR(data)} ao Meta?${aviso}`)) return;
+  // Ja enviadas sao puladas pelo servidor, sem aviso -- a confirmacao conta so as novas
+  const aEnviar = vendas.filter(v => !v.ja_enviada).length;
+  if (aEnviar === 0) return;
+  if (!confirm(`Enviar ${aEnviar} venda(s) aprovada(s) de ${dataBR(data)} ao Meta?`)) return;
 
   const btn = document.getElementById('btnEnviarMeta');
   const msg = document.getElementById('msgMeta');
@@ -317,13 +322,15 @@ async function enviarVendasMeta() {
     const porErro = {};
     r.falhas.forEach(f => { porErro[f.erro] = (porErro[f.erro] || 0) + 1; });
     const textoFalhas = Object.entries(porErro).map(([erro, n]) => `${n} falha(s): ${erro}`).join(' | ');
+    const tentadas = r.enviados.length + r.falhas.length;
     msg.className = r.falhas.length ? 'msg erro' : 'msg ok';
-    msg.textContent = `${r.enviados.length} de ${r.total_vendas} enviada(s) ao Meta.` + (textoFalhas ? ` ${textoFalhas}` : '');
+    msg.textContent = `${r.enviados.length} de ${tentadas} enviada(s) ao Meta.` +
+      (r.puladas.length ? ` ${r.puladas.length} já tinha(m) sido enviada(s) e foi(ram) pulada(s).` : '') +
+      (textoFalhas ? ` ${textoFalhas}` : '');
   } catch (e) {
     msg.className = 'msg erro'; msg.textContent = 'Erro de conexao ao enviar.';
   } finally {
-    btn.disabled = false; btn.textContent = 'Enviar ao Meta';
-    // Recarrega a lista pra atualizar a coluna "Ja enviada", mantendo a mensagem do envio
+    // Recarrega a lista (atualiza "Ja enviada" e o botao), mantendo a mensagem do envio
     const mensagem = { className: msg.className, textContent: msg.textContent };
     await carregarVendasParaMeta();
     msg.className = mensagem.className; msg.textContent = mensagem.textContent;

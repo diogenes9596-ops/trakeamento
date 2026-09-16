@@ -250,9 +250,13 @@ router.post('/enviar-vendas-meta', async (req, res) => {
   try {
     const vendas = await vendasAprovadasDoDia(data);
 
+    // Venda que o Meta ja aceitou antes e pulada automaticamente, sem aviso
+    // (decisao do usuario em 16/09/2026) -- reenviar contaria a mesma
+    // conversao de novo.
+    const puladas = vendas.filter(v => v.ja_enviada).map(v => ({ id: v.id, nome: v.nome_cliente }));
     const enviados = [];
     const falhas = [];
-    for (const v of vendas) {
+    for (const v of vendas.filter(v => !v.ja_enviada)) {
       try {
         const resultado = await enviarEventoCapi({
           evento: 'Purchase',
@@ -272,8 +276,8 @@ router.post('/enviar-vendas-meta', async (req, res) => {
       }
     }
 
-    console.log(`Envio manual ao Meta (${data}): ${enviados.length} enviada(s), ${falhas.length} falha(s).`);
-    res.json({ data, total_vendas: vendas.length, enviados, falhas });
+    console.log(`Envio manual ao Meta (${data}): ${enviados.length} enviada(s), ${falhas.length} falha(s), ${puladas.length} ja enviada(s) antes (pulada).`);
+    res.json({ data, total_vendas: vendas.length, enviados, falhas, puladas });
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: 'Erro ao enviar vendas pro Meta' });
