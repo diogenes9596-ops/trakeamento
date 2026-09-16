@@ -80,7 +80,7 @@ router.post('/lancar-venda', async (req, res) => {
 
     // Atribuicao imediata: procura lead com esse telefone
     if (telefoneNormalizado) {
-      const janelaHoras = parseInt(process.env.JANELA_ATRIBUICAO_HORAS || '72', 10);
+      const janelaHoras = parseInt(process.env.JANELA_ATRIBUICAO_HORAS || '720', 10);
       const lead = await encontrarLeadParaVenda(telefoneNormalizado, venda.recebido_em, janelaHoras);
       if (lead) {
         await pool.query(

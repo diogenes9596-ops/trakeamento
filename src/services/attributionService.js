@@ -38,7 +38,9 @@ async function encontrarLeadParaVenda(telefoneVenda, dataVenda, janelaHoras) {
 
 // Roda a atribuicao para vendas que ainda nao foram processadas
 async function atribuirVendasPendentes() {
-  const janelaHoras = parseInt(process.env.JANELA_ATRIBUICAO_HORAS || '72', 10);
+  // Padrao de 720h (30 dias) -- o mesmo valor configurado no Railway. Se a
+  // variavel sumir um dia, a janela nao cai silenciosamente pra 72h.
+  const janelaHoras = parseInt(process.env.JANELA_ATRIBUICAO_HORAS || '720', 10);
 
   const vendas = await pool.query(
     `SELECT * FROM sales WHERE atribuido_em IS NULL ORDER BY recebido_em ASC LIMIT 500`
