@@ -160,6 +160,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **`fx_rates` pode ficar vazia mesmo com a função de salvar existindo** — `salvarCotacaoDoDia` só é chamada pela rota manual `/api/fx/dia`; a função de leitura (`obterCotacaoParaData`) precisa *também* chamar o save após buscar ao vivo, senão a "cotação do dia" nunca fica fixa de verdade (bug real, já corrigido, mas fique atento se reaparecer numa refatoração).
 - **CAPI automático "vazando"**: hoje está desligado nas três integrações (Skale, Payt, DataCrazy). Se um dia alguém ligar ou desligar numa delas, confira as outras duas — elas não sincronizam sozinhas, e já houve envio automático continuando num webhook que se achava desligado.
 - **`action_source: 'business_messaging'` + `messaging_channel: 'whatsapp'` derrubou 100% dos envios ao CAPI** (Meta respondia "Invalid parameter") da noite de 15/09 até a reversão em 16/09/2026. Não tentar de novo sem antes descobrir o formato/endpoint correto e testar com `test_event_code`, que manda o evento só pra área de testes do Gerenciador.
+- **Vendas da Skale processadas entre 09/09/2026 17:27 e 11/09/2026 20:11 podem ter status errado.** Essa versão do webhook procurava "Pago" em **qualquer** campo do payload (busca cega) e marcou como `aprovada` um pedido com todas as cobranças recusadas (`ven_158205`). Venda que não recebeu nenhum evento depois dessa janela mantém o status errado. O teste de aceite cobre o cenário: status só pode vir de `transaction.payment_status`.
 - **`payload_bruto` de vendas da Skale pode ser do PRIMEIRO evento, não do último.** Até 12/09/2026 10:58 (commit `6d823b4`) o `ON CONFLICT` atualizava `valor` mas não `payload_bruto`. Pra venda cujo último evento chegou antes disso, comparar `valor` com o payload guardado compara com um preço velho.
 - **`atribuido_em` não é "hora do último evento"**: `/api/dashboard/reprocessar-atribuicao` (vendas aprovadas sem `ad_id`) e `/api/eventos-manuais/reatribuir` zeram e recalculam o campo.
 - **Até o deploy de 16/09/2026, evento da Skale sem `total_price` zerava o valor da venda** (o código antigo caía em `|| 0`). Pode haver vendas com `valor = 0` em produção por causa disso.
@@ -171,7 +172,8 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 
 ## Pendências abertas (não mexer sem o usuário)
 
-- **Venda `ven_158205`: `aprovada` aqui, "Aguardando Pagamento" na Skale.** Conferido na Skale em 16/09/2026: kit "3 MESES", R$ 483,00 (bate com o valor gravado), R$ 0,00 pago. Não se sabe se foi paga e depois estornada/revertida ou se foi marcada como paga por engano. **Não alterar valor nem status** até o usuário confirmar.
+- **Venda `ven_158205`: status decidido `desconhecido`** (usuário, 16/09/2026). Conferido na Skale: **nunca foi paga** — 5 cobranças recusadas em 11/09/2026 e uma ainda "Aguardando Pagamento" (por isso não `recusada`: a cliente ainda pode pagar). O valor R$ 483,00 está certo (kit trocado de R$ 773 no mesmo dia). Ficou `aprovada` por causa da busca cega por "Pago" (ver Armadilhas). **Falta confirmar que o UPDATE foi aplicado em produção.** Se a cobrança for paga, o próximo evento da Skale atualiza o status sozinho.
+- **Conferência das vendas `aprovada` antigas contra a Skale** (candidatas: aprovadas com `recebido_em` antes de 12/09/2026): autorizada em 16/09/2026, aguardando a lista vinda da produção.
 
 ---
 
