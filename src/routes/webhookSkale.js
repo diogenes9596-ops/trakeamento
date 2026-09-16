@@ -39,20 +39,6 @@ function buscarValorConhecido(obj, lista, profundidade = 0) {
   return null;
 }
 
-// Tenta uma lista de "caminhos" (funcoes) no payload, em ordem, e devolve o
-// primeiro valor nao vazio. Usado pra cobrir os formatos mais provÃ¡veis que
-// a Skale pode usar pra cada campo, ja que nao temos um payload real
-// confirmado ainda -- fica facil adicionar mais um caminho se precisar.
-function primeiroValor(body, caminhos) {
-  for (const c of caminhos) {
-    try {
-      const v = c(body);
-      if (v !== undefined && v !== null && v !== '') return v;
-    } catch (e) { /* caminho nao existe nesse payload, tenta o proximo */ }
-  }
-  return undefined;
-}
-
 // Extrai a data REAL do pagamento do payload da Skale (campos
 // transaction.paid_at_data + paid_at_hora, ou transaction.paid_at como
 // fallback). So preenchido quando o pagamento ja confirmou -- e exatamente
@@ -118,42 +104,36 @@ router.post('/skale', async (req, res) => {
   res.sendStatus(200);
 
   try {
-    const idExterno = primeiroValor(body, [
-      b => b.id_venda, b => b.id_pedido, b => b.pedido?.id, b => b.venda?.id,
-      b => b.order_id, b => b.transaction_id, b => b.numero_pedido, b => b.codigo_pedido, b => b.id,
-    ]);
+    // Campos confirmados com payloads reais da Skale em 16/09/2026 -- leitura
+    // direta. Antes cada campo era "o primeiro que existisse" numa lista de
+    // caminhos possiveis, o que podia pegar o campo errado (ex: um id que nao
+    // fosse o transaction_id). Todas as vendas ja gravadas usam ven_XXXXXX
+    // (conferido no banco de producao), entao a troca nao gera duplicata.
+    const idExterno = body?.transaction_id;
     if (!idExterno) {
-      console.warn('Webhook Skale sem id do pedido identificavel. Payload:', JSON.stringify(body).slice(0, 1000));
+      console.warn('Webhook Skale sem transaction_id. Payload:', JSON.stringify(body).slice(0, 1000));
       return;
     }
     const idExternoTexto = String(idExterno);
 
-    let telefone = String(primeiroValor(body, [
-      b => b.cliente?.telefone, b => b.customer?.phone, b => b.telefone,
-      b => b.cliente?.celular, b => b.cliente?.whatsapp, b => b.whatsapp,
-    ]) || '').replace(/\D/g, '');
+    let telefone = String(body?.customer?.phone || '').replace(/\D/g, '');
     if (telefone && !telefone.startsWith('55')) {
       telefone = '55' + telefone;
     }
 
-    const email = primeiroValor(body, [
-      b => b.cliente?.email, b => b.customer?.email, b => b.email,
-    ]);
-    const nomeCliente = primeiroValor(body, [
-      b => b.cliente?.nome, b => b.customer?.name, b => b.nome_cliente, b => b.nome,
-    ]);
-    const produto = primeiroValor(body, [
-      b => b.kits?.[0]?.nome, b => b.kit?.nome, b => b.produtos?.[0]?.nome,
-      b => b.product?.name, b => b.produto,
-    ]);
+    const email = body?.customer?.email || null;
+    const nomeCliente = body?.customer?.name || null;
+    const produto = body?.product?.name || null; // nome do kit, ex: "6 MESES"
 
-    let valorBruto = parseFloat(primeiroValor(body, [
-      b => b.valor_pago, b => b.valor, b => b.pedido?.valor, b => b.total,
-      b => b.transaction?.total_price, b => b.total_price,
-    ]) || 0);
-    // Se algum dia a Skale mandar em centavos (numero bem maior que o
-    // ticket medio dessa loja), corrige dividindo por 100.
-    const valor = valorBruto > 10000 ? valorBruto / 100 : valorBruto;
+    // transaction.total_price vem SEMPRE em centavos -- divide por 100 sempre.
+    // (A regra antiga so dividia acima de 10000, o que gravava um produto de
+    // R$ 97,00 como R$ 9.700,00.) Evento sem o campo (ex: atualizacao tardia
+    // de rastreio) deixa valor = null e a venda mantem o valor que ja tinha.
+    const totalPrice = parseFloat(body?.transaction?.total_price);
+    const valor = Number.isFinite(totalPrice) ? totalPrice / 100 : null;
+    if (valor === null) {
+      console.log(`Webhook Skale ${idExternoTexto} sem transaction.total_price -- valor salvo mantido.`);
+    }
 
     // Campos ESPECIFICOS (nao busca cega) -- confirmados com payloads reais
     // da Skale: transaction.payment_status Ã© o status financeiro de verdade
@@ -205,9 +185,9 @@ router.post('/skale', async (req, res) => {
 
     await pool.query(
       `INSERT INTO sales (plataforma, id_externo, status, telefone, email, nome_cliente, valor, produto, payload_bruto, recebido_em)
-       VALUES ('skale', $1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, NOW()))
+       VALUES ('skale', $1, $2, $3, $4, $5, COALESCE($6::numeric, 0), $7, $8, COALESCE($9::timestamptz, NOW()))
        ON CONFLICT (plataforma, id_externo)
-       DO UPDATE SET status = EXCLUDED.status, valor = EXCLUDED.valor, atribuido_em = NULL,
+       DO UPDATE SET status = EXCLUDED.status, valor = COALESCE($6::numeric, sales.valor), atribuido_em = NULL,
                      payload_bruto = EXCLUDED.payload_bruto,
                      recebido_em = COALESCE($9::timestamptz, sales.recebido_em)`,
       [idExternoTexto, status, telefone, email, nomeCliente, valor, produto, JSON.stringify(body), dataPagamento]
