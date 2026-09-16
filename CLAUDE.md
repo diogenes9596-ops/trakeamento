@@ -98,7 +98,7 @@ test/
 | `pixels` | pixels do Meta pra CAPI; `is_default=TRUE` é o que recebe os eventos |
 | `sales` | **tabela central** — plataforma, `id_externo`, status, telefone, valor, `ad_id`, `lead_id`, `atribuido_em`, `recebido_em`, `payload_bruto`. `UNIQUE(plataforma, id_externo)` |
 | `eventos_capi` | log de cada envio ao Meta CAPI (payload + resposta/erro) |
-| `webhooks_recebidos` | todo evento que chega no webhook da Skale, gravado **antes** de responder "ok": `payload`, `status` (`recebido` → `processado` \| `erro`), `erro`, `id_externo`. Criada também no boot do servidor (ver Armadilhas) |
+| `webhooks_recebidos` | todo evento que chega nos webhooks da Skale e do DataCrazy, gravado **antes** de responder "ok": `payload`, `status` (`recebido` → `processado` \| `erro`), `erro`, `id_externo`. Criada também no boot do servidor (ver Armadilhas) |
 | `meta_campaigns` / `meta_adsets` / `meta_ads` | espelho da estrutura do Meta, `ON DELETE CASCADE` entre os três |
 | `produtos_manuais` | produtos pro dropdown de lançamento manual |
 | `branding` | white-label (nunca customizado de fato, mas o recurso existe) |
@@ -120,7 +120,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 - **Cotação do dólar fixa por dia**: ver Regras de negócio.
 - **Lançamento manual** (`/api/eventos-manuais/lancar-venda`, `/lancar-lead`): herda atribuição automaticamente se o telefone bater. Venda só com data (sem hora) vai pra **23:59:59 -03:00** daquele dia, pra atribuir qualquer lead chegado no mesmo dia; data fora do formato AAAA-MM-DD responde 400. Não envia nada ao Meta. No painel só existe o formulário de venda; `lancar-lead` e `reatribuir` são só API.
 - **Envio manual ao CAPI** — aba "Enviar ao Meta" em Eventos Manuais: escolhe o dia do pagamento, pré-visualiza as vendas aprovadas (`GET /api/eventos-manuais/vendas-para-meta`, marca quem tem `ctwa_clid` e quem **já foi aceita pelo Meta antes**, via `event_id` em `eventos_capi`), confirma e envia (`POST /enviar-vendas-meta`). **Venda já aceita pelo Meta é pulada automaticamente, sem aviso** (decisão do usuário, 16/09/2026). O envio devolve enviadas × puladas × falhas com o motivo real — `enviarEventoCapi` retorna `{ ok, erro }`.
-- **Nenhuma venda da Skale se perde entre o "ok" e a gravação** (16/09/2026): o webhook grava o payload em `webhooks_recebidos` antes de responder "ok" e depois marca `processado` ou `erro`. Se nem o payload puder ser gravado, processa a venda antes de responder e só diz "ok" se ela foi gravada — senão responde 500. Eventos com erro, ou presos em `recebido` por mais de 5 minutos, aparecem em **Configurações > Webhooks** (`GET /api/webhooks-config/erros`). Alerta por e-mail/WhatsApp: não, por decisão do usuário.
+- **Nenhuma venda (Skale) nem lead (DataCrazy) se perde entre o "ok" e a gravação** (16/09/2026): os dois webhooks gravam o payload em `webhooks_recebidos` antes de responder "ok" e depois marcam `processado` (referência `ven_...` ou `lead_<id>`) ou `erro`. Se nem o payload puder ser gravado, processam a venda/lead antes de responder e só dizem "ok" se ela foi gravada — senão respondem 500. Evento do DataCrazy sem `phone` agora é `erro` visível (antes era descartado em silêncio). O webhook da **Payt não** tem esse registro — ficou como estava, por decisão do usuário. Eventos com erro, ou presos em `recebido` por mais de 5 minutos, aparecem em **Configurações > Webhooks** (`GET /api/webhooks-config/erros`). Alerta por e-mail/WhatsApp: não, por decisão do usuário.
 - **Sincronização sob demanda**: botão "🔄 Sincronizar agora" no painel = `POST /api/dashboard/sincronizar-agora` (mesmo ciclo do cron, na hora).
 - **Páginas do painel**: Overview, Campanhas (com drill-down Campanha→Conjunto→Anúncio), Criativos, Leads, Vendas, Eventos (log CAPI), Eventos Manuais, Configurações. **Agendamentos não é página**: é um dos filtros de status dentro de Vendas (`src/public/vendas.html`), junto com Aprovada, Pendente, Recusada, Cancelada e Reembolsada.
 
@@ -182,6 +182,7 @@ O comentário da coluna `sales.status` no `schema.sql` está desatualizado (list
 
 ## Pendências abertas (não mexer sem o usuário)
 
+- **Retenção de `webhooks_recebidos`**: a tabela guarda todo evento da Skale e do DataCrazy e cresce sem limite. Por quanto tempo guardar ficou pra decidir depois (usuário, 16/09/2026) — não apagar nada e não bloquear outras entregas por isso.
 - **1 venda da Skale com telefone do RS sem DDI (`ven_136041`)**: correção autorizada pelo usuário em 16/09/2026, **aguardando o UPDATE ser rodado em produção**. O telefone original dela na Skale já vem com DDI (13 dígitos). Regra segura pra esse tipo de correção: só acrescentar 55 quando `'55' || telefone gravado` for exatamente o telefone original da Skale normalizado por `normalizarTelefoneBR` — número que veio sem DDD também fica com 10/11 dígitos gravados e não deve ganhar 55.
 
 ---

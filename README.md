@@ -116,8 +116,13 @@ preenchido com o secret que aparece em Configurações > Webhooks.
 
 O sistema procura `phone`, `ctwa_clid`, `source_id`, `source_url` e `page_id`
 tanto na raiz do payload quanto em `referral`, `message.referral` e `metadata`.
-Sem `phone`, o evento é ignorado. **Esse webhook só registra o lead — não
-dispara nenhum evento pro Meta.**
+**Esse webhook só registra o lead — não dispara nenhum evento pro Meta.**
+
+**Nenhum lead se perde no caminho** — mesmo cuidado do webhook da Skale (seção
+4.3): o evento é gravado no banco antes de o sistema responder "ok". Evento sem
+`phone` não vira lead e aparece em **Configurações > Webhooks**, na lista "Erros
+no processamento" (antes era descartado em silêncio). Lead perdido é venda
+futura sem atribuição ao anúncio.
 
 ### 4.3. Skale Tracking (vendas — origem principal)
 
