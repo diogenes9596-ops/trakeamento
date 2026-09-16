@@ -22,6 +22,7 @@ document.getElementById('layout').innerHTML = montarSidebar() + `
       <div class="tabs-internas" style="padding:0 0 16px;">
         <button class="ativo" data-aba="lancar">Lançar venda</button>
         <button data-aba="produtos">Produtos</button>
+        <button data-aba="meta">Enviar ao Meta</button>
       </div>
 
       <div id="conteudoAba"></div>
@@ -205,8 +206,132 @@ async function removerProduto(id) {
   carregarProdutos();
 }
 
+// ---------------- ENVIAR AO META ----------------
+// Unico ponto do sistema que envia algo ao Meta (CAPI). Mostra antes o que vai
+// ser enviado e so envia depois de confirmar.
+let previewMeta = null; // { data, vendas } da ultima lista carregada
+
+function escaparHtml(texto) {
+  return String(texto ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function dataBR(aaaaMmDd) {
+  const [a, m, d] = aaaaMmDd.split('-');
+  return `${d}/${m}/${a}`;
+}
+
+function abaEnviarMeta() {
+  previewMeta = null;
+  const el = document.getElementById('conteudoAba');
+  el.innerHTML = `
+    <div class="painel" style="padding:20px; margin-bottom:20px;">
+      <h2 style="margin-top:0;">Enviar vendas ao Meta</h2>
+      <p class="desc">Envia o evento <b>Purchase</b> (Conversions API) de todas as vendas <b>aprovadas</b> no dia do pagamento escolhido, pro pixel padrão (Configurações &gt; Pixels). Nada vai pro Meta sozinho — só por este botão. Confira a lista antes de enviar; o resultado de cada envio fica na aba Eventos.</p>
+      <div class="form-inline">
+        <div class="campo"><label>Dia do pagamento</label><input type="date" id="mData" value="${formatarDataLocal(new Date())}"></div>
+      </div>
+      <button onclick="carregarVendasParaMeta()">Ver vendas do dia</button>
+      <div class="msg" id="msgMeta" style="margin-top:10px;"></div>
+    </div>
+
+    <div class="painel" id="painelVendasMeta" style="display:none;">
+      <div class="painel-titulo"><span id="tituloVendasMeta"></span></div>
+      <div class="tabela-scroll">
+        <table>
+          <thead><tr><th>Cliente</th><th>ID do pedido</th><th>Origem</th><th>Valor</th><th>Clique do anúncio</th><th>Já enviada ao Meta?</th></tr></thead>
+          <tbody id="corpoVendasMeta"></tbody>
+        </table>
+      </div>
+      <div style="padding:14px;">
+        <button class="primary" id="btnEnviarMeta" onclick="enviarVendasMeta()">Enviar ao Meta</button>
+      </div>
+    </div>
+  `;
+  // Trocar a data invalida a lista na tela -- evita enviar um dia diferente do que foi conferido
+  document.getElementById('mData').addEventListener('change', () => {
+    previewMeta = null;
+    document.getElementById('painelVendasMeta').style.display = 'none';
+    document.getElementById('msgMeta').textContent = '';
+  });
+}
+
+async function carregarVendasParaMeta() {
+  const msg = document.getElementById('msgMeta');
+  const data = document.getElementById('mData').value;
+  msg.className = 'msg'; msg.textContent = 'Carregando...';
+
+  const resp = await fetch(`/api/eventos-manuais/vendas-para-meta?data=${encodeURIComponent(data)}`);
+  const r = await resp.json();
+  if (!resp.ok) {
+    msg.className = 'msg erro'; msg.textContent = r.erro || 'Erro ao carregar vendas';
+    return;
+  }
+
+  previewMeta = { data: r.data, vendas: r.vendas };
+  const painel = document.getElementById('painelVendasMeta');
+  if (r.vendas.length === 0) {
+    painel.style.display = 'none';
+    msg.className = 'msg'; msg.textContent = `Nenhuma venda aprovada em ${dataBR(r.data)}.`;
+    return;
+  }
+
+  const jaEnviadas = r.vendas.filter(v => v.ja_enviada).length;
+  const total = r.vendas.reduce((s, v) => s + Number(v.valor || 0), 0);
+  msg.textContent = '';
+  document.getElementById('tituloVendasMeta').textContent =
+    `${r.vendas.length} venda(s) aprovada(s) em ${dataBR(r.data)} — ${formatarMoeda(total)}` +
+    (jaEnviadas ? ` · ${jaEnviadas} já enviada(s) antes` : '');
+  document.getElementById('corpoVendasMeta').innerHTML = r.vendas.map(v => `
+    <tr>
+      <td>${escaparHtml(v.nome_cliente) || '--'}</td>
+      <td style="font-family:monospace; font-size:11px;">${escaparHtml(v.id_externo) || '--'}</td>
+      <td>${escaparHtml(v.plataforma)}</td>
+      <td>${formatarMoeda(v.valor)}</td>
+      <td><span class="badge ${v.tem_ctwa_clid ? 'bom' : 'neutro'}">${v.tem_ctwa_clid ? 'SIM' : 'NÃO'}</span></td>
+      <td><span class="badge ${v.ja_enviada ? 'alerta' : 'neutro'}">${v.ja_enviada ? 'JÁ ENVIADA' : 'NÃO'}</span></td>
+    </tr>
+  `).join('');
+  painel.style.display = '';
+}
+
+async function enviarVendasMeta() {
+  if (!previewMeta || previewMeta.vendas.length === 0) return;
+  const { data, vendas } = previewMeta;
+  const jaEnviadas = vendas.filter(v => v.ja_enviada).length;
+  const aviso = jaEnviadas ? `\n\nATENÇÃO: ${jaEnviadas} dessas vendas já foram enviadas ao Meta antes e serão enviadas de novo.` : '';
+  if (!confirm(`Enviar ${vendas.length} venda(s) aprovada(s) de ${dataBR(data)} ao Meta?${aviso}`)) return;
+
+  const btn = document.getElementById('btnEnviarMeta');
+  const msg = document.getElementById('msgMeta');
+  btn.disabled = true; btn.textContent = 'Enviando...';
+  try {
+    const resp = await fetch('/api/eventos-manuais/enviar-vendas-meta', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data }),
+    });
+    const r = await resp.json();
+    if (!resp.ok) {
+      msg.className = 'msg erro'; msg.textContent = r.erro || 'Erro ao enviar';
+      return;
+    }
+    // Agrupa as falhas por mensagem de erro (ex: sem pixel = mesmo erro em todas)
+    const porErro = {};
+    r.falhas.forEach(f => { porErro[f.erro] = (porErro[f.erro] || 0) + 1; });
+    const textoFalhas = Object.entries(porErro).map(([erro, n]) => `${n} falha(s): ${erro}`).join(' | ');
+    msg.className = r.falhas.length ? 'msg erro' : 'msg ok';
+    msg.textContent = `${r.enviados.length} de ${r.total_vendas} enviada(s) ao Meta.` + (textoFalhas ? ` ${textoFalhas}` : '');
+  } catch (e) {
+    msg.className = 'msg erro'; msg.textContent = 'Erro de conexao ao enviar.';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Enviar ao Meta';
+    // Recarrega a lista pra atualizar a coluna "Ja enviada", mantendo a mensagem do envio
+    const mensagem = { className: msg.className, textContent: msg.textContent };
+    await carregarVendasParaMeta();
+    msg.className = mensagem.className; msg.textContent = mensagem.textContent;
+  }
+}
+
 function renderizarAba(aba) {
-  const funcoes = { lancar: abaLancar, produtos: abaProdutos };
+  const funcoes = { lancar: abaLancar, produtos: abaProdutos, meta: abaEnviarMeta };
   funcoes[aba]();
 }
 

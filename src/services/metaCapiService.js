@@ -33,9 +33,11 @@ async function enviarEventoCapi({ evento, telefone, eventSourceUrl, valor, moeda
 
   if (!pixel) {
     console.log(`Nenhum pixel default configurado para receber evento ${evento} ÃÂ¢ÃÂÃÂ pulei o envio.`);
-    return;
+    return { ok: false, erro: 'Nenhum pixel padrao configurado (Configuracoes > Pixels)' };
   }
 
+  // Devolve { ok, erro } -- antes nao devolvia nada, e quem chamava contava
+  // como "enviado" ate envio recusado pelo Meta ou sem pixel configurado.
   const payloadEvento = {
     event_name: evento,
     event_time: Math.floor(Date.now() / 1000),
@@ -68,6 +70,7 @@ async function enviarEventoCapi({ evento, telefone, eventSourceUrl, valor, moeda
        VALUES ($1, $2, $3, 'ok', $4)`,
       [evento, telefone, pixel.pixel_id, JSON.stringify({ enviado: payloadEvento, resposta: data })]
     );
+    return { ok: true };
   } catch (err) {
     const mensagem = err.response?.data?.error?.message || err.message;
     console.error(`Erro ao enviar evento ${evento} pro CAPI:`, mensagem);
@@ -76,6 +79,7 @@ async function enviarEventoCapi({ evento, telefone, eventSourceUrl, valor, moeda
        VALUES ($1, $2, $3, 'erro', $4, $5)`,
       [evento, telefone, pixel.pixel_id, JSON.stringify({ enviado: payloadEvento }), mensagem]
     );
+    return { ok: false, erro: mensagem };
   }
 }
 

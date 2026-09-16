@@ -184,39 +184,96 @@ router.delete('/produtos/:id', async (req, res) => {
   res.json({ sucesso: true });
 });
 
-// Envio MANUAL e pontual de Purchase pro Meta CAPI para as vendas aprovadas
-// de uma data (default: hoje). Isso e so-esse-disparo, a pedido do usuario --
-// o envio automatico continua desligado permanentemente no webhook da Skale.
-router.post('/enviar-vendas-meta', async (req, res) => {
-  const data = req.body?.data || new Date().toISOString().slice(0, 10);
+function dataValida(data) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(data || ''));
+}
+
+// "Hoje" no horario de Brasilia -- toISOString() devolve UTC e, depois das
+// 21h, ja seria o dia seguinte.
+function hojeEmBrasilia() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+}
+
+// Vendas aprovadas de um dia do pagamento (o pool ja roda em
+// America/Sao_Paulo, entao $1::date e a meia-noite de Brasilia). Intervalo
+// meio-aberto [dia, dia+1): o BETWEEN antigo incluia a meia-noite seguinte nos
+// dois dias. "ja_enviada" = o Meta ja aceitou um Purchase dessa venda antes,
+// por este envio manual (manual_...) ou pelo automatico da Skale que existiu
+// de 15 a 16/09/2026 (skale_...).
+async function vendasAprovadasDoDia(data) {
+  const r = await pool.query(
+    `SELECT s.id, s.id_externo, s.plataforma, s.telefone, s.valor, s.nome_cliente, s.recebido_em, l.ctwa_clid,
+            EXISTS (
+              SELECT 1 FROM eventos_capi e
+              WHERE e.status = 'ok' AND e.evento = 'Purchase'
+                AND e.payload->'enviado'->>'event_id' IN (
+                  'manual_' || COALESCE(s.plataforma, 'skale') || '_' || COALESCE(s.id_externo, s.id::text),
+                  'skale_' || s.id_externo
+                )
+            ) AS ja_enviada
+     FROM sales s
+     LEFT JOIN leads l ON l.id = s.lead_id
+     WHERE s.status = 'aprovada'
+       AND s.recebido_em >= $1::date
+       AND s.recebido_em < $1::date + INTERVAL '1 day'
+     ORDER BY s.recebido_em`,
+    [data]
+  );
+  return r.rows;
+}
+
+// Pre-visualizacao da aba "Enviar ao Meta": o que seria enviado, sem enviar.
+router.get('/vendas-para-meta', async (req, res) => {
+  const data = req.query.data || hojeEmBrasilia();
+  if (!dataValida(data)) return res.status(400).json({ erro: 'Data invalida, use AAAA-MM-DD' });
   try {
-    const vendas = await pool.query(
-      `SELECT s.id, s.id_externo, s.plataforma, s.telefone, s.valor, s.nome_cliente, l.ctwa_clid
-       FROM sales s
-       LEFT JOIN leads l ON l.id = s.lead_id
-       WHERE s.status = 'aprovada' AND s.recebido_em BETWEEN $1 AND ($1::date + INTERVAL '1 day')`,
-      [data]
-    );
+    const vendas = await vendasAprovadasDoDia(data);
+    res.json({
+      data,
+      vendas: vendas.map(v => ({
+        id: v.id, id_externo: v.id_externo, plataforma: v.plataforma, nome_cliente: v.nome_cliente,
+        valor: v.valor, recebido_em: v.recebido_em, tem_ctwa_clid: !!v.ctwa_clid, ja_enviada: v.ja_enviada,
+      })),
+    });
+  } catch (err) {
+    console.error('Erro ao listar vendas pra enviar ao Meta:', err);
+    res.status(500).json({ erro: 'Erro ao listar vendas do dia' });
+  }
+});
+
+// Envio MANUAL de Purchase pro Meta CAPI das vendas aprovadas de um dia --
+// botao "Enviar ao Meta" da pagina Eventos Manuais. E o UNICO lugar do sistema
+// que envia algo ao Meta: nenhum webhook e nem o lancamento manual enviam.
+router.post('/enviar-vendas-meta', async (req, res) => {
+  const data = req.body?.data || hojeEmBrasilia();
+  if (!dataValida(data)) return res.status(400).json({ erro: 'Data invalida, use AAAA-MM-DD' });
+  try {
+    const vendas = await vendasAprovadasDoDia(data);
 
     const enviados = [];
     const falhas = [];
-    for (const v of vendas.rows) {
+    for (const v of vendas) {
       try {
-        await enviarEventoCapi({
+        const resultado = await enviarEventoCapi({
           evento: 'Purchase',
           telefone: v.telefone,
           valor: parseFloat(v.valor),
           eventId: `manual_${v.plataforma || 'skale'}_${v.id_externo || v.id}`,
           ctwaClid: v.ctwa_clid || null,
         });
-        enviados.push({ id: v.id, nome: v.nome_cliente, valor: v.valor });
+        if (resultado?.ok) {
+          enviados.push({ id: v.id, nome: v.nome_cliente, valor: v.valor });
+        } else {
+          falhas.push({ id: v.id, nome: v.nome_cliente, erro: resultado?.erro || 'Envio nao confirmado' });
+        }
       } catch (err) {
         console.error(`Erro ao enviar venda ${v.id} pro Meta:`, err.message);
         falhas.push({ id: v.id, nome: v.nome_cliente, erro: err.message });
       }
     }
 
-    res.json({ data, total_vendas: vendas.rows.length, enviados, falhas });
+    console.log(`Envio manual ao Meta (${data}): ${enviados.length} enviada(s), ${falhas.length} falha(s).`);
+    res.json({ data, total_vendas: vendas.length, enviados, falhas });
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: 'Erro ao enviar vendas pro Meta' });
